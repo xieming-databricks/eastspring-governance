@@ -1,0 +1,14 @@
+schema_version: "1.0"
+grant_rules:
+  - groups:
+      - hera-adbk-investments-read
+      - hera-adbk-investments-read-unmasked
+    bundle: READ
+    match:
+      object_types: [table, view]
+      tags: {acm_business_function: investments}
+    include:
+      - {type: function, name: asset_prod.gold.valuation_label}
+      - {type: volume, name: asset_prod.gold.exports}
+    exclude:
+      - {type: table, name: asset_prod.gold.restricted_positions}

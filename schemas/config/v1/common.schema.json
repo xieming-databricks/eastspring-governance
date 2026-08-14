@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eastspring.governance/schemas/config/v1/common.schema.json",
+  "title": "Common definitions for the Eastspring governance YAML contract (v1.0)",
+  "$comment": "Shared $defs referenced by grants/policies/tags schemas. Draft 2020-12. All records are closed.",
+  "$defs": {
+    "SchemaVersion": {
+      "$comment": "Only 1.0 is supported by this schema release; unsupported versions fail validation.",
+      "const": "1.0"
+    },
+
+    "NonEmptyString": {
+      "$comment": "String containing at least one non-whitespace character.",
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "NamePart": {
+      "$comment": "NonEmptyString containing no '.' — at least one non-whitespace char, no dots.",
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*$"
+    },
+    "CatalogName": {
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*$"
+    },
+    "SchemaName": {
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*$"
+    },
+    "ObjectName": {
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*$"
+    },
+    "ColumnName": {
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*$"
+    },
+    "Identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "FrameworkManagedFunctionName": {
+      "$comment": "FunctionName (ObjectName shape) whose final segment starts with 'acm_'.",
+      "type": "string",
+      "pattern": "^[^.]*[^.\\s][^.]*\\.[^.]*[^.\\s][^.]*\\.acm_[A-Za-z0-9_]*$"
+    },
+    "PolicyScope": {
+      "$comment": "Fully qualified catalog, schema, or table (ON CATALOG/SCHEMA/TABLE). 'backed by a table' for the object-name case is checked in the semantic/live layer.",
+      "anyOf": [
+        { "$ref": "#/$defs/CatalogName" },
+        { "$ref": "#/$defs/SchemaName" },
+        { "$ref": "#/$defs/ObjectName" }
+      ]
+    },
+
+    "ObjectType": {
+      "enum": ["catalog", "schema", "table", "view", "function", "volume"]
+    },
+    "SecurableType": {
+      "enum": ["catalog", "schema", "table", "view", "function", "volume", "column"]
+    },
+    "Bundle": {
+      "enum": ["READ", "WRITE", "OWNER", "ADMIN"]
+    },
+
+    "FrameworkManagedTagKey": {
+      "$comment": "Closed enum; every member starts with 'acm_'. Extend per release as the vocabulary grows.",
+      "enum": ["acm_business_function", "acm_pii_type", "acm_rls"]
+    },
+    "AcmBusinessFunction": {
+      "$comment": "Release-populated vocabulary from the Access Matrix 'Business Functions' tab. Seeded with values observed in the design doc; extend for the actual release.",
+      "enum": ["investments", "performance_attribution", "compliance", "quants"]
+    },
+    "AcmPiiType": {
+      "$comment": "Column-routing key for masking. FULL_NAME + the cryptographic protections identifier/secret.",
+      "enum": ["FULL_NAME", "identifier", "secret"]
+    },
+    "AcmRlsDimension": {
+      "$comment": "Column-routing key for row-level security. Release-populated; seeded with doc examples.",
+      "enum": ["region", "legal_entity"]
+    },
+
+    "AssetTagMap": {
+      "$comment": "One or more framework-managed asset-tag predicates (keys whose allowed grains include an object type). Grain-vs-key legality beyond column/asset split is enforced in the semantic (Static Validate) layer.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "acm_business_function": { "$ref": "#/$defs/AcmBusinessFunction" }
+      }
+    },
+
+    "ObjectRef": {
+      "$comment": "Name shape is validated per declared type via oneOf.",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "$ref": "#/$defs/ObjectType" },
+        "name": { "type": "string" }
+      },
+      "oneOf": [
+        {
+          "properties": { "type": { "const": "catalog" }, "name": { "$ref": "#/$defs/CatalogName" } }
+        },
+        {
+          "properties": { "type": { "const": "schema" }, "name": { "$ref": "#/$defs/SchemaName" } }
+        },
+        {
+          "properties": { "type": { "enum": ["table", "view", "function", "volume"] }, "name": { "$ref": "#/$defs/ObjectName" } }
+        }
+      ]
+    },
+
+    "SecurableRef": {
+      "$comment": "Like ObjectRef but adds the 'column' securable type (ColumnName shape).",
+      "type": "object",
+      "unevaluatedProperties": false,
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "$ref": "#/$defs/SecurableType" },
+        "name": { "type": "string" }
+      },
+      "oneOf": [
+        {
+          "properties": { "type": { "const": "catalog" }, "name": { "$ref": "#/$defs/CatalogName" } }
+        },
+        {
+          "properties": { "type": { "const": "schema" }, "name": { "$ref": "#/$defs/SchemaName" } }
+        },
+        {
+          "properties": { "type": { "enum": ["table", "view", "function", "volume"] }, "name": { "$ref": "#/$defs/ObjectName" } }
+        },
+        {
+          "properties": { "type": { "const": "column" }, "name": { "$ref": "#/$defs/ColumnName" } }
+        }
+      ]
+    }
+  }
+}

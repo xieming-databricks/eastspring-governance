@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eastspring.governance/schemas/config/v1/tags.schema.json",
+  "title": "TagsYaml (v1.0)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "tags"],
+  "properties": {
+    "schema_version": { "$ref": "common.schema.json#/$defs/SchemaVersion" },
+    "tags": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/TagAssignment" }
+    }
+  },
+  "$defs": {
+    "TagAssignment": {
+      "$comment": "Grain routing: column securables carry only acm_pii_type/acm_rls; asset securables carry only acm_business_function. Enforced via if/then on securable.type. 'a securable appears at most once in tags.yaml' is a cross-item rule enforced in the semantic layer.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["securable", "tags"],
+      "properties": {
+        "securable": { "$ref": "common.schema.json#/$defs/SecurableRef" },
+        "tags": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "acm_business_function": { "$ref": "common.schema.json#/$defs/AcmBusinessFunction" },
+            "acm_pii_type": { "$ref": "common.schema.json#/$defs/AcmPiiType" },
+            "acm_rls": { "$ref": "common.schema.json#/$defs/AcmRlsDimension" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$comment": "column grain -> only column-routing keys allowed",
+          "if": {
+            "properties": { "securable": { "properties": { "type": { "const": "column" } } } }
+          },
+          "then": {
+            "properties": {
+              "tags": { "properties": { "acm_business_function": false } }
+            }
+          },
+          "else": {
+            "properties": {
+              "tags": {
+                "properties": {
+                  "acm_pii_type": false,
+                  "acm_rls": false
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

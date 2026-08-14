@@ -1,0 +1,32 @@
+# Virtual environments (rebuild from requirements.txt)
+.venv/
+venv/
+env/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Packaging / build artifacts
+*.egg-info/
+build/
+dist/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local scratch
+*.tmp
+*.bak
+*~

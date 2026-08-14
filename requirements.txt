@@ -1,0 +1,6 @@
+# Eastspring governance framework — validation dependencies
+jsonschema>=4.21     # Approach A: JSON Schema 2020-12 validation
+referencing>=0.33    # $ref resolution registry for jsonschema
+pydantic>=2.6        # Approach B: code-first models
+PyYAML>=6.0          # YAML loading (safe_load)
+pytest>=8.0          # test suite
