@@ -26,13 +26,14 @@ config/<env>/
   validation.
 - Schema versions follow Semantic Versioning 2.0.0.
 
-Shared definitions are held in `common.schema.json`. File-to-schema mapping:
+Schemas are authored in YAML (Draft 2020-12 vocabulary, YAML syntax). Shared
+definitions are held in `common.schema.yaml`. File-to-schema mapping:
 
-| Generated file | JSON Schema           | Root type     |
+| Generated file | JSON Schema (YAML)     | Root type     |
 | :------------- | :-------------------- | :------------ |
-| `grants.yaml`   | `grants.schema.json`   | `GrantsYaml`   |
-| `policies.yaml` | `policies.schema.json` | `PoliciesYaml` |
-| `tags.yaml`     | `tags.schema.json`     | `TagsYaml`     |
+| `grants.yaml`   | `grants.schema.yaml`   | `GrantsYaml`   |
+| `policies.yaml` | `policies.schema.yaml` | `PoliciesYaml` |
+| `tags.yaml`     | `tags.schema.yaml`     | `TagsYaml`     |
 
 ## Type model (concrete v1.0 structure)
 

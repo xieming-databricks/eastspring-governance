@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .pydantic_validator import ValidationResult, validate_dir
+from .validator import ValidationResult, validate_dir
 
 
 def _print(result: ValidationResult) -> None:

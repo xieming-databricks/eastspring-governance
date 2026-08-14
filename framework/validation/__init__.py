@@ -1,12 +1,11 @@
 """Validation for the Eastspring governance YAML contract.
 
-Code-first Pydantic v2 models (``pydantic_validator``) mirror the contract:
-``extra="forbid"`` (closed records), ``Literal`` enums, and ``@model_validator``
-for cross-field / cross-item rules. YAML -> ``model_validate`` -> typed objects.
+The contract is authored as YAML JSON Schema files (``schemas/config/v1/*.schema.yaml``,
+Draft 2020-12) and enforced with the ``jsonschema`` library, plus a small
+structural semantic layer for the cross-item rules JSON Schema cannot express.
 
-``validate_dir(config_dir) -> ValidationResult`` returns the normalized
-``Issue`` shape.
+``validate_dir(config_dir) -> ValidationResult`` returns normalized ``Issue``s.
 """
-from .pydantic_validator import Issue, ValidationResult, validate_dir
+from .validator import Issue, ValidationResult, validate_dir
 
 __all__ = ["Issue", "ValidationResult", "validate_dir"]

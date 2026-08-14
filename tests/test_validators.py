@@ -1,8 +1,8 @@
-"""Tests for the Pydantic config validator.
+"""Tests for the JSON Schema config validator.
 
 Each corruption is applied to the valid baseline (config/uat), written to a temp
 dir, and run through the validator. We assert the valid baseline passes and every
-corruption is caught.
+corruption is caught (by the YAML schemas or the semantic layer).
 """
 from __future__ import annotations
 
@@ -12,12 +12,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from framework.validation import pydantic_validator
+from framework.validation import validate_dir
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINE = REPO / "config" / "uat"
-
-validate_dir = pydantic_validator.validate_dir
 
 
 def _load(name: str) -> dict:

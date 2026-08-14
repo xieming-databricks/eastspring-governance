@@ -1,0 +1,206 @@
+"""JSON Schema validation for the Eastspring governance contract.
+
+The contract is authored as **YAML** JSON Schema files under
+``schemas/config/v1/*.schema.yaml`` (Draft 2020-12 vocabulary, YAML syntax) and
+enforced with the ``jsonschema`` library. Shared ``$defs`` live in
+``common.schema.yaml`` and are resolved through a ``referencing`` registry.
+
+JSON Schema is declarative, so it cannot express a handful of cross-field /
+cross-item rules. Those run in a small structural ``semantic`` layer below and
+need no external state. Deeper Static-Validate rules from the design doc
+(mask/RLS coverage, function existence in ``functions.sql``, policy quotas) need
+the compiled model / live state and belong to the Compile step, not here.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+
+
+# ---- Normalized result types --------------------------------------------
+
+@dataclass(frozen=True, order=True)
+class Issue:
+    """One validation finding, ordered by (file, path) for stable, diffable output."""
+    file: str          # config file the issue is in, e.g. "grants.yaml"
+    path: str          # location within the file, JSON-pointer style, e.g. "grant_rules/0/bundle"
+    message: str = field(compare=False)
+    layer: str = field(default="schema", compare=False)   # "schema" | "semantic"
+
+    def __str__(self) -> str:
+        loc = f"{self.file}:{self.path}" if self.path else self.file
+        return f"[{self.layer}] {loc}: {self.message}"
+
+
+@dataclass
+class ValidationResult:
+    """Outcome of validating a config directory."""
+    config_dir: str
+    issues: list[Issue] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def sorted_issues(self) -> list[Issue]:
+        return sorted(self.issues)
+
+    def summary(self) -> str:
+        if self.ok:
+            return f"OK {self.config_dir} — no issues"
+        n = len(self.issues)
+        schema_n = sum(1 for i in self.issues if i.layer == "schema")
+        sem_n = n - schema_n
+        return (
+            f"FAIL {self.config_dir} — {n} issue(s) "
+            f"({schema_n} schema, {sem_n} semantic)"
+        )
+
+
+# ---- Paths / mappings ----------------------------------------------------
+
+_DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas" / "config" / "v1"
+
+_FILE_SCHEMA = {
+    "grants.yaml": "grants.schema.yaml",
+    "policies.yaml": "policies.schema.yaml",
+    "tags.yaml": "tags.schema.yaml",
+}
+
+
+# ---- Structural semantic layer (rules JSON Schema cannot express) --------
+
+def _check_grants(doc: Any) -> list[Issue]:
+    """grants.yaml: no object may appear in both include and exclude of a rule."""
+    issues: list[Issue] = []
+    if not isinstance(doc, dict):
+        return issues
+    for i, rule in enumerate(_as_list(doc.get("grant_rules"))):
+        if not isinstance(rule, dict):
+            continue
+        inc = {_ref_key(o) for o in _as_list(rule.get("include"))}
+        exc = {_ref_key(o) for o in _as_list(rule.get("exclude"))}
+        for key in sorted(k for k in inc & exc if k is not None):
+            issues.append(Issue("grants.yaml", f"grant_rules/{i}",
+                                f"object {key} appears in both include and exclude", "semantic"))
+    return issues
+
+
+def _check_tags(doc: Any) -> list[Issue]:
+    """tags.yaml: a securable may appear only once (all its tags in one entry)."""
+    issues: list[Issue] = []
+    if not isinstance(doc, dict):
+        return issues
+    seen: dict[str, int] = {}
+    for i, entry in enumerate(_as_list(doc.get("tags"))):
+        if not isinstance(entry, dict):
+            continue
+        key = _ref_key(entry.get("securable"))
+        if key is None:
+            continue
+        if key in seen:
+            issues.append(Issue("tags.yaml", f"tags/{i}/securable",
+                                f"securable {key} is repeated (first at tags/{seen[key]}); "
+                                f"put all of its tags in one entry", "semantic"))
+        else:
+            seen[key] = i
+    return issues
+
+
+def _check_policies(doc: Any) -> list[Issue]:
+    """policies.yaml: row-filter column aliases must be unique within a policy."""
+    issues: list[Issue] = []
+    if not isinstance(doc, dict):
+        return issues
+    for i, pol in enumerate(_as_list(doc.get("row_filter_policies"))):
+        if not isinstance(pol, dict):
+            continue
+        aliases = [m["as"] for m in _as_list(pol.get("column_matching_tags"))
+                   if isinstance(m, dict) and isinstance(m.get("as"), str)]
+        for a in sorted({a for a in aliases if aliases.count(a) > 1}):
+            issues.append(Issue("policies.yaml", f"row_filter_policies/{i}",
+                                f"duplicate column alias {a!r} within the policy", "semantic"))
+    return issues
+
+
+_FILE_SEMANTIC = {
+    "grants.yaml": _check_grants,
+    "policies.yaml": _check_policies,
+    "tags.yaml": _check_tags,
+}
+
+
+# ---- Schema loading + validation -----------------------------------------
+
+def _build_registry(schema_dir: Path) -> Registry:
+    """Load every *.schema.yaml into a referencing Registry keyed by $id."""
+    registry = Registry()
+    for path in sorted(schema_dir.glob("*.schema.yaml")):
+        resource = Resource.from_contents(yaml.safe_load(path.read_text()))
+        registry = resource @ registry
+    return registry
+
+
+def _path_str(error) -> str:
+    return "/".join(str(p) for p in error.absolute_path)
+
+
+def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -> ValidationResult:
+    """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas."""
+    config_dir = Path(config_dir)
+    schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
+    result = ValidationResult(config_dir=str(config_dir))
+
+    registry = _build_registry(schema_dir)
+    schema_versions: dict[str, Any] = {}
+
+    for filename, schema_name in _FILE_SCHEMA.items():
+        path = config_dir / filename
+        if not path.exists():
+            result.issues.append(Issue(filename, "", "file not found", "schema"))
+            continue
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            result.issues.append(Issue(filename, "", f"YAML parse error: {exc}", "schema"))
+            continue
+
+        schema = yaml.safe_load((schema_dir / schema_name).read_text())
+        validator = Draft202012Validator(schema, registry=registry)
+        for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
+            result.issues.append(Issue(filename, _path_str(err), err.message, "schema"))
+
+        if isinstance(doc, dict):
+            schema_versions[filename] = doc.get("schema_version")
+
+        result.issues.extend(_FILE_SEMANTIC[filename](doc))
+
+    # Cross-file: every file must declare the same schema_version.
+    distinct = {v for v in schema_versions.values() if v is not None}
+    if len(distinct) > 1:
+        for filename, ver in schema_versions.items():
+            result.issues.append(Issue(
+                filename, "schema_version",
+                f"schema_version {ver!r} disagrees with other files {sorted(distinct)}",
+                "semantic",
+            ))
+
+    return result
+
+
+# ---- helpers -------------------------------------------------------------
+
+def _as_list(v: Any) -> list:
+    return v if isinstance(v, list) else []
+
+
+def _ref_key(ref: Any) -> str | None:
+    """Stable identity for an ObjectRef/SecurableRef: 'type:name'."""
+    if isinstance(ref, dict) and "type" in ref and "name" in ref:
+        return f"{ref['type']}:{ref['name']}"
+    return None
