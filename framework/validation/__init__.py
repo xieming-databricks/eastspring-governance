@@ -6,6 +6,6 @@ structural semantic layer for the cross-item rules JSON Schema cannot express.
 
 ``validate_dir(config_dir) -> ValidationResult`` returns normalized ``Issue``s.
 """
-from .validator import Issue, ValidationResult, validate_dir
+from .validator import Issue, ValidationResult, validate_dir, validate_docs
 
-__all__ = ["Issue", "ValidationResult", "validate_dir"]
+__all__ = ["Issue", "ValidationResult", "validate_dir", "validate_docs"]

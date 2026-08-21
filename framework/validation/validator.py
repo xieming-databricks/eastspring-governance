@@ -150,6 +150,30 @@ def _path_str(error) -> str:
     return "/".join(str(p) for p in error.absolute_path)
 
 
+def _validate_one(filename: str, doc: Any, schema_dir: Path, registry: Registry) -> list[Issue]:
+    """Validate one parsed doc against its schema, then run its semantic checks."""
+    issues: list[Issue] = []
+    schema = yaml.safe_load((schema_dir / _FILE_SCHEMA[filename]).read_text())
+    validator = Draft202012Validator(schema, registry=registry)
+    for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
+        issues.append(Issue(filename, _path_str(err), err.message, "schema"))
+    issues.extend(_FILE_SEMANTIC[filename](doc))
+    return issues
+
+
+def _cross_file_version(schema_versions: dict[str, Any]) -> list[Issue]:
+    """Every provided file must declare the same schema_version."""
+    distinct = {v for v in schema_versions.values() if v is not None}
+    if len(distinct) <= 1:
+        return []
+    return [
+        Issue(filename, "schema_version",
+              f"schema_version {ver!r} disagrees with other files {sorted(distinct)}",
+              "semantic")
+        for filename, ver in schema_versions.items()
+    ]
+
+
 def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -> ValidationResult:
     """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas."""
     config_dir = Path(config_dir)
@@ -159,7 +183,7 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
     registry = _build_registry(schema_dir)
     schema_versions: dict[str, Any] = {}
 
-    for filename, schema_name in _FILE_SCHEMA.items():
+    for filename in _FILE_SCHEMA:
         path = config_dir / filename
         if not path.exists():
             result.issues.append(Issue(filename, "", "file not found", "schema"))
@@ -169,27 +193,42 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
         except yaml.YAMLError as exc:
             result.issues.append(Issue(filename, "", f"YAML parse error: {exc}", "schema"))
             continue
-
-        schema = yaml.safe_load((schema_dir / schema_name).read_text())
-        validator = Draft202012Validator(schema, registry=registry)
-        for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
-            result.issues.append(Issue(filename, _path_str(err), err.message, "schema"))
-
         if isinstance(doc, dict):
             schema_versions[filename] = doc.get("schema_version")
+        result.issues.extend(_validate_one(filename, doc, schema_dir, registry))
 
-        result.issues.extend(_FILE_SEMANTIC[filename](doc))
+    result.issues.extend(_cross_file_version(schema_versions))
+    return result
 
-    # Cross-file: every file must declare the same schema_version.
-    distinct = {v for v in schema_versions.values() if v is not None}
-    if len(distinct) > 1:
-        for filename, ver in schema_versions.items():
-            result.issues.append(Issue(
-                filename, "schema_version",
-                f"schema_version {ver!r} disagrees with other files {sorted(distinct)}",
-                "semantic",
-            ))
 
+# Short keys the Databricks Job passes as JSON dict params.
+_SHORT_TO_FILE = {"grants": "grants.yaml", "policies": "policies.yaml", "tags": "tags.yaml"}
+
+
+def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None) -> ValidationResult:
+    """Validate already-parsed config dicts against the YAML schemas.
+
+    ``docs`` may be keyed by short name (``"grants"``) or filename (``"grants.yaml"``).
+    Use this when config arrives as in-memory dicts (e.g. JSON job params) rather than
+    files on disk. A missing dimension is reported as an issue, mirroring ``validate_dir``.
+    """
+    schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
+    by_file = {_SHORT_TO_FILE.get(key, key): doc for key, doc in docs.items()}
+
+    result = ValidationResult(config_dir="<docs>")
+    registry = _build_registry(schema_dir)
+    schema_versions: dict[str, Any] = {}
+
+    for filename in _FILE_SCHEMA:
+        doc = by_file.get(filename)
+        if doc is None:
+            result.issues.append(Issue(filename, "", "document not provided", "schema"))
+            continue
+        if isinstance(doc, dict):
+            schema_versions[filename] = doc.get("schema_version")
+        result.issues.extend(_validate_one(filename, doc, schema_dir, registry))
+
+    result.issues.extend(_cross_file_version(schema_versions))
     return result
 
 
