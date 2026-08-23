@@ -1,0 +1,82 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://eastspring.governance/schemas/config/v1/grants.schema.yaml
+title: GrantsYaml (v1.0)
+type: object
+additionalProperties: false
+required:
+- schema_version
+- grant_rules
+properties:
+  schema_version:
+    $ref: common.schema.yaml#/$defs/SchemaVersion
+  grant_rules:
+    type: array
+    items:
+      $ref: '#/$defs/GrantRule'
+$defs:
+  GrantMatch:
+    $comment: 'object_types must be a non-empty unique list; tags is a non-empty asset-tag map. Grain legality: acm_business_function permits only container/table/view grains, enforced via if/then.'
+    type: object
+    additionalProperties: false
+    required:
+    - object_types
+    - tags
+    properties:
+      object_types:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: common.schema.yaml#/$defs/ObjectType
+      tags:
+        $ref: common.schema.yaml#/$defs/AssetTagMap
+    if:
+      properties:
+        tags:
+          required:
+          - acm_business_function
+    then:
+      properties:
+        object_types:
+          items:
+            enum:
+            - catalog
+            - schema
+            - table
+            - view
+  GrantRule:
+    $comment: match is present OR include contains at least one object (enforced via anyOf on required).
+    type: object
+    additionalProperties: false
+    required:
+    - groups
+    - bundle
+    properties:
+      groups:
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: common.schema.yaml#/$defs/NonEmptyString
+      bundle:
+        $ref: common.schema.yaml#/$defs/Bundle
+      match:
+        $ref: '#/$defs/GrantMatch'
+      include:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: common.schema.yaml#/$defs/ObjectRef
+      exclude:
+        type: array
+        uniqueItems: true
+        items:
+          $ref: common.schema.yaml#/$defs/ObjectRef
+    anyOf:
+    - required:
+      - match
+    - required:
+      - include
+      properties:
+        include:
+          minItems: 1

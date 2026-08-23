@@ -1,8 +1,8 @@
-"""Tests for the Pydantic config validator.
+"""Tests for the JSON Schema config validator.
 
 Each corruption is applied to the valid baseline (config/uat), written to a temp
 dir, and run through the validator. We assert the valid baseline passes and every
-corruption is caught.
+corruption is caught (by the YAML schemas or the semantic layer).
 """
 from __future__ import annotations
 
@@ -12,12 +12,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from framework.validation import pydantic_validator
+from framework.validation import validate_dir
 
 REPO = Path(__file__).resolve().parents[1]
 BASELINE = REPO / "config" / "uat"
-
-validate_dir = pydantic_validator.validate_dir
 
 
 def _load(name: str) -> dict:
@@ -130,3 +128,30 @@ def test_missing_file(tmp_path):
     result = validate_dir(tmp_path)   # empty dir
     assert not result.ok
     assert any("file not found" in i.message for i in result.issues)
+
+
+# ---- optional governance.yaml -------------------------------------------
+
+def test_governance_absent_is_ok(tmp_path):
+    """governance.yaml is optional: valid grants/tags/policies with no governance passes."""
+    cfg = _write_config(tmp_path, *_baseline())
+    assert validate_dir(cfg).ok
+
+
+def test_governance_valid(tmp_path):
+    cfg = _write_config(tmp_path, *_baseline())
+    (cfg / "governance.yaml").write_text(yaml.safe_dump(
+        {"schema_version": "1.0", "deployers": ["hera-adbk-deploy"],
+         "admin_groups": ["account admins"], "protected_schemas": []},
+        sort_keys=False))
+    assert validate_dir(cfg).ok
+
+
+def test_governance_invalid_caught(tmp_path):
+    cfg = _write_config(tmp_path, *_baseline())
+    (cfg / "governance.yaml").write_text(yaml.safe_dump(
+        {"schema_version": "1.0", "admin_groups": "not-a-list"},   # must be an array
+        sort_keys=False))
+    result = validate_dir(cfg)
+    assert not result.ok
+    assert any(i.file == "governance.yaml" for i in result.issues)
