@@ -147,11 +147,10 @@ delta_frames = diff.diff_all(target, live_frames,
                              protected_schemas=protected_schemas)
 delta_counts = {}
 for dim, df in delta_frames.items():
-    df.cache()
-    rows = df.collect()  # small: only the changed rows, not the full live set
+    rows = df.collect()
     delta_counts[dim] = rows
     print(f"=== delta: {dim} ({len(rows)} change(s)) ===")
-    show(df)
+    show(rows)
 
 # COMMAND ----------
 
