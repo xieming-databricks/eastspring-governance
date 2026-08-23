@@ -1,20 +1,26 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Governance reconcile — target state vs. live Unity Catalog
+# MAGIC # Governance reconcile — full-sync a target catalog against the YAML config
 # MAGIC
-# MAGIC Compiles the validated YAML config into target state, reads live state from
+# MAGIC Compiles the validated YAML into target state, reads live state from
 # MAGIC `system.information_schema` (+ `SHOW POLICIES`), and emits a **per-dimension
 # MAGIC delta** (`change_type` = ADD / REMOVE / CHANGE) plus a **warning list** of
 # MAGIC referenced objects/functions that don't exist. It changes nothing.
 # MAGIC
-# MAGIC **`config_path`:** workspace path holding `grants.yaml` / `tags.yaml` / `policies.yaml`
-# MAGIC (default: the uploaded `config/uat`). The notebook reads the three files from there.
-# MAGIC Catalogs to reconcile are **computed from the config** (the first segment of each
-# MAGIC fully-qualified name) — no catalog parameter needed.
+# MAGIC **v1 full-sync scope:** the **`target_catalog`** parameter is treated as
+# MAGIC framework-owned — every live grant in it that the YAML does not declare is a
+# MAGIC **REMOVE**, except grants to a **protected principal** (the deploying identity +
+# MAGIC configured `admin_groups`) or in a **protected schema** (`information_schema` +
+# MAGIC configured extras). Tags/policies stay `acm_`-namespaced. Anything outside the
+# MAGIC target catalog is ignored.
+# MAGIC
+# MAGIC **`config_path`:** workspace path holding `grants.yaml` / `tags.yaml` /
+# MAGIC `policies.yaml` and an optional `governance.yaml`.
 
 # COMMAND ----------
 
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/uat")
+dbutils.widgets.text("target_catalog", "asset_prod")
 
 import sys
 from pathlib import Path
@@ -37,7 +43,7 @@ def show(df):
 
 # COMMAND ----------
 
-# DBTITLE 1,Load config from the workspace path
+# DBTITLE 1,Load config from the workspace path (governance.yaml optional)
 from pathlib import Path
 import yaml
 
@@ -46,7 +52,10 @@ docs = {
     k: yaml.safe_load((config_path / f"{k}.yaml").read_text())
     for k in ("grants", "tags", "policies")
 }
-print(f"[reconcile] config_source={config_path}")
+gov_path = config_path / "governance.yaml"
+if gov_path.exists():
+    docs["governance"] = yaml.safe_load(gov_path.read_text())
+print(f"[reconcile] config_source={config_path} | governance={'yes' if 'governance' in docs else 'no'}")
 
 # COMMAND ----------
 
@@ -76,11 +85,24 @@ print(f"[reconcile] target: {len(state.grants)} grants | {len(state.tags)} tags 
 
 # COMMAND ----------
 
-# DBTITLE 1,Target-state DataFrames
+# DBTITLE 1,Target catalog + target-state DataFrames
 from framework.reconcile import frames, scope
 
-catalogs = scope.catalogs_from_config(docs)   # first segment of every securable FQN in config
-print(f"[reconcile] catalogs in scope (from config): {catalogs}")
+target_catalog = dbutils.widgets.get("target_catalog").strip()
+if not target_catalog:
+    raise ValueError("`target_catalog` widget is required")
+catalogs = [target_catalog]
+
+# Anything outside the target catalog is ignored by the diff — surface how much.
+outside = sorted({g.securable_fqn for g in state.grants
+                  if g.securable_fqn.split(".")[0] != target_catalog}
+                 | {t.securable_fqn for t in state.tags
+                    if t.securable_fqn.split(".")[0] != target_catalog}
+                 | {p.scope for p in state.policies
+                    if p.scope.split(".")[0] != target_catalog})
+print(f"[reconcile] target_catalog={target_catalog}")
+if outside:
+    print(f"[reconcile] ignoring {len(outside)} securable(s) outside the target catalog: {outside}")
 
 target = frames.target_frames(spark, state)  # noqa: F821  (spark builtin)
 for dim, df in target.items():
@@ -89,25 +111,46 @@ for dim, df in target.items():
 
 # COMMAND ----------
 
-# DBTITLE 1,Read live state from information_schema (+ SHOW POLICIES)
+# DBTITLE 1,Read live state from information_schema (+ SHOW POLICIES) — as DataFrames
 from framework.reconcile import live
 
-live_grants = live.read_live_grants(spark, catalogs)          # noqa: F821
-live_tags = live.read_live_tags(spark, catalogs)              # noqa: F821
-live_policies = live.read_live_policies(spark, scope.policy_scopes(state))  # noqa: F821
-existing = live.read_existing_objects(spark, catalogs)        # noqa: F821
-print(f"[reconcile] live: {len(live_grants)} grants | {len(live_tags)} tags | "
-      f"{len(live_policies)} policies | {len(existing)} objects")
+live_frames = {
+    "grants": live.read_live_grants(spark, catalogs),                        # noqa: F821
+    "tags": live.read_live_tags(spark, catalogs),                            # noqa: F821
+    "policies": live.read_live_policies(spark, scope.policy_scopes(state)),  # noqa: F821
+}
+existing = live.read_existing_objects(spark, catalogs)                       # noqa: F821
+print(f"[reconcile] live objects for preflight: {len(existing)}")
 
 # COMMAND ----------
 
-# DBTITLE 1,Diff -> per-dimension delta (ADD / REMOVE / CHANGE)
+# DBTITLE 1,Protected set (full-sync guardrail — never proposed for REMOVE)
+deployer = spark.sql("SELECT current_user()").collect()[0][0]  # noqa: F821
+gov = docs.get("governance") or {}
+protected_principals = scope.protected_principals(
+    deployer=deployer,
+    deployers=gov.get("deployers"),
+    admin_groups=gov.get("admin_groups"))
+protected_schemas = scope.protected_schemas(extra=gov.get("protected_schemas"))
+print(f"[reconcile] deployer={deployer}")
+print(f"[reconcile] protected principals={sorted(protected_principals)}")
+print(f"[reconcile] protected schemas={sorted(protected_schemas)}")
+
+# COMMAND ----------
+
+# DBTITLE 1,Diff in Spark -> per-dimension delta (ADD / REMOVE / CHANGE)
 from framework.reconcile import diff
 
-deltas = diff.diff_all(state, live_grants, live_tags, live_policies)
-delta_frames = frames.delta_frames(spark, deltas)  # noqa: F821
+delta_frames = diff.diff_all(target, live_frames,
+                             target_catalog=target_catalog,
+                             protected_principals=protected_principals,
+                             protected_schemas=protected_schemas)
+delta_counts = {}
 for dim, df in delta_frames.items():
-    print(f"=== delta: {dim} ({df.count()} change(s)) ===")
+    df.cache()
+    rows = df.collect()  # small: only the changed rows, not the full live set
+    delta_counts[dim] = rows
+    print(f"=== delta: {dim} ({len(rows)} change(s)) ===")
     show(df)
 
 # COMMAND ----------
@@ -126,7 +169,8 @@ show(warn_df)
 from collections import Counter
 
 parts = []
-for dim, rows in deltas.items():
+for dim, rows in delta_counts.items():
     c = Counter(r["change_type"] for r in rows)
     parts.append(f"{dim} {dict(c)}" if rows else f"{dim} up-to-date")
-print("RECONCILE OK | " + " | ".join(parts) + f" | warnings={len(warnings)}")
+print(f"RECONCILE OK | catalog={target_catalog} | " + " | ".join(parts)
+      + f" | warnings={len(warnings)} | ignored_outside_catalog={len(outside)}")

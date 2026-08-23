@@ -1,0 +1,16 @@
+schema_version: "1.0"
+# Full-sync guardrail — principals/schemas the framework must NEVER revoke.
+#
+# Protected automatically (no need to list here):
+#   - the deploying identity           (resolved at run time via current_user())
+#   - securable owners                 (catalog / schema / table owners, read live)
+#   - the "System user" principal      (Databricks internal grantee)
+#   - the "information_schema" schema   (system schema in every catalog)
+#
+# List only ADDITIONS below.
+deployers: []                 # deployment SP/group(s) that run GRANT/REVOKE; also protected via current_user()
+  # - hera-adbk-governance-deploy   # TODO: your deployment service principal / group
+admin_groups:
+  - account admins            # Databricks account-level admins
+  # - <eastspring-uc-admin-group>   # TODO: your platform/UC admin group(s)
+protected_schemas: []         # information_schema always protected; add extras here

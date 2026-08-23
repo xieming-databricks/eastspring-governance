@@ -4,8 +4,12 @@ Uses ``system.information_schema`` (cross-catalog, confirmed available on the te
 workspace) for grants/tags/objects, and ``SHOW POLICIES`` for ABAC policies (which
 are not exposed in information_schema). ``spark`` is the session the Job runs with.
 
-Returns plain row dicts matching the shapes in ``diff.py`` so the pure-Python diff
-can consume them directly.
+Grant/tag/policy readers return **Spark DataFrames** (never collected) so the Spark-SQL
+diff scales to a full catalog's grants. Columns match the target frames in ``frames.py``:
+grants ``(principal, privilege_type, securable_type, securable_fqn)``; tags
+``(securable_type, securable_fqn, tag_key, tag_value)``; policies
+``(scope, policy_name, policy_type, function)``. ``read_existing_objects`` still returns a
+small driver-side set (referenced-object existence for preflight).
 
 NOTE (verify during e2e): exact column names of routine_privileges (``specific_*``),
 the ``inherited_from`` sentinel value, and the ``SHOW POLICIES`` output columns are
@@ -13,13 +17,15 @@ confirmed against the live workspace and adjusted if needed.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import StructType, StructField, StringType
 
 Row = dict[str, Any]
 _SYS = "system.information_schema"
+
+_POLICY_COLS = ["scope", "policy_name", "policy_type", "function"]
 
 
 def _in_list(vals) -> str:
@@ -27,12 +33,18 @@ def _in_list(vals) -> str:
     return ",".join("'" + v.replace("'", "''") + "'" for v in uniq)
 
 
-def read_live_grants(spark: "SparkSession", catalogs: list[str]) -> list[Row]:
-    """Direct grants (inherited_from = 'NONE') on the config's catalogs, unioned across
-    the five privilege views into (principal, privilege_type, securable_type, fqn)."""
+def _empty(spark: SparkSession, cols: list[str]) -> DataFrame:
+    schema = StructType([StructField(c, StringType(), True) for c in cols])
+    return spark.createDataFrame([], schema)
+
+
+def read_live_grants(spark: SparkSession, catalogs: list[str]) -> DataFrame:
+    """Direct grants (inherited_from = 'NONE') on the given catalogs, unioned across the
+    five privilege views into (principal, privilege_type, securable_type, securable_fqn).
+    Returns a DataFrame (not collected) so the diff runs in Spark."""
     cats = _in_list(catalogs)
     if not cats:
-        return []
+        return _empty(spark, ["principal", "privilege_type", "securable_type", "securable_fqn"])
     sql = f"""
     SELECT grantee AS principal, privilege_type, 'catalog' AS securable_type,
            catalog_name AS securable_fqn
@@ -59,15 +71,16 @@ def read_live_grants(spark: "SparkSession", catalogs: list[str]) -> list[Row]:
       FROM {_SYS}.volume_privileges
      WHERE inherited_from = 'NONE' AND volume_catalog IN ({cats})
     """
-    return [r.asDict() for r in spark.sql(sql).collect()]
+    return spark.sql(sql)
 
 
-def read_live_tags(spark: "SparkSession", catalogs: list[str]) -> list[Row]:
-    """acm_* and any other tag assignments on the config's catalogs, unioned across the
-    five tag views into (securable_type, fqn, tag_key, tag_value)."""
+def read_live_tags(spark: SparkSession, catalogs: list[str]) -> DataFrame:
+    """All tag assignments on the given catalogs, unioned across the five tag views into
+    (securable_type, securable_fqn, tag_key, tag_value). Returns a DataFrame; the diff
+    filters to acm_* keys."""
     cats = _in_list(catalogs)
     if not cats:
-        return []
+        return _empty(spark, ["securable_type", "securable_fqn", "tag_key", "tag_value"])
     sql = f"""
     SELECT 'catalog' AS securable_type, catalog_name AS securable_fqn,
            tag_name AS tag_key, tag_value
@@ -86,10 +99,10 @@ def read_live_tags(spark: "SparkSession", catalogs: list[str]) -> list[Row]:
     SELECT 'volume', concat_ws('.', catalog_name, schema_name, volume_name), tag_name, tag_value
       FROM {_SYS}.volume_tags WHERE catalog_name IN ({cats})
     """
-    return [r.asDict() for r in spark.sql(sql).collect()]
+    return spark.sql(sql)
 
 
-def read_existing_objects(spark: "SparkSession", catalogs: list[str]) -> set[tuple[str, str]]:
+def read_existing_objects(spark: SparkSession, catalogs: list[str]) -> set[tuple[str, str]]:
     """Set of (object_type, fqn) that exist live, for the preflight check."""
     cats = _in_list(catalogs)
     existing: set[tuple[str, str]] = set()
@@ -130,13 +143,14 @@ def read_existing_objects(spark: "SparkSession", catalogs: list[str]) -> set[tup
 _SCOPE_KEYWORD = {"catalog": "CATALOG", "schema": "SCHEMA", "table": "TABLE"}
 
 
-def read_live_policies(spark: "SparkSession", scopes: list[tuple[str, str]]) -> list[Row]:
-    """Run SHOW POLICIES for each (scope_type, fqn) and normalize to
-    (scope, policy_name, policy_type, function). ``scopes`` is de-duplicated.
+def read_live_policies(spark: SparkSession, scopes: list[tuple[str, str]]) -> DataFrame:
+    """Run SHOW POLICIES for each (scope_type, fqn), normalize to
+    (scope, policy_name, policy_type, function), and return a DataFrame. ``scopes`` is
+    de-duplicated. Policies are few, so this collects per scope then rebuilds a frame for
+    a uniform diff input.
 
-    SHOW POLICIES column names vary; we map defensively and record the raw row under
-    'raw' for debugging. Verify/adjust the column mapping during e2e."""
-    out: list[Row] = []
+    SHOW POLICIES column names vary; we map defensively. Verify/adjust during e2e."""
+    rows: list[tuple] = []
     for scope_type, fqn in sorted(set(scopes)):
         kw = _SCOPE_KEYWORD.get(scope_type)
         if kw is None:
@@ -153,9 +167,11 @@ def read_live_policies(spark: "SparkSession", scopes: list[tuple[str, str]]) -> 
             func = _pick(d, cols, ["function", "function_name", "mask_function", "filter_function"])
             if name is None:
                 continue
-            out.append({"scope": fqn, "policy_name": name, "policy_type": ptype,
-                        "function": func, "raw": d})
-    return out
+            rows.append((fqn, name, ptype, func))
+    if not rows:
+        return _empty(spark, _POLICY_COLS)
+    schema = StructType([StructField(c, StringType(), True) for c in _POLICY_COLS])
+    return spark.createDataFrame(rows, schema)
 
 
 def _pick(d: dict, cols: dict, candidates: list[str]):

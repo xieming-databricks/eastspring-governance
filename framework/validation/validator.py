@@ -72,6 +72,13 @@ _FILE_SCHEMA = {
     "tags.yaml": "tags.schema.yaml",
 }
 
+# Validated only if present (absence is not an error), unlike the required files above.
+_OPTIONAL_FILE_SCHEMA = {
+    "governance.yaml": "governance.schema.yaml",
+}
+
+_ALL_FILE_SCHEMA = {**_FILE_SCHEMA, **_OPTIONAL_FILE_SCHEMA}
+
 
 # ---- Structural semantic layer (rules JSON Schema cannot express) --------
 
@@ -153,11 +160,14 @@ def _path_str(error) -> str:
 def _validate_one(filename: str, doc: Any, schema_dir: Path, registry: Registry) -> list[Issue]:
     """Validate one parsed doc against its schema, then run its semantic checks."""
     issues: list[Issue] = []
-    schema = yaml.safe_load((schema_dir / _FILE_SCHEMA[filename]).read_text())
+    schema = yaml.safe_load((schema_dir / _ALL_FILE_SCHEMA[filename]).read_text())
     validator = Draft202012Validator(schema, registry=registry)
-    for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
-        issues.append(Issue(filename, _path_str(err), err.message, "schema"))
-    issues.extend(_FILE_SEMANTIC[filename](doc))
+    # Order isn't set here: ValidationResult.sorted_issues() sorts everything by (file, path).
+    issues.extend(
+        Issue(filename, _path_str(err), err.message, "schema")
+        for err in validator.iter_errors(doc)
+    )
+    issues.extend(_FILE_SEMANTIC.get(filename, lambda _doc: [])(doc))
     return issues
 
 
@@ -197,12 +207,26 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
             schema_versions[filename] = doc.get("schema_version")
         result.issues.extend(_validate_one(filename, doc, schema_dir, registry))
 
+    for filename in _OPTIONAL_FILE_SCHEMA:
+        path = config_dir / filename
+        if not path.exists():
+            continue
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            result.issues.append(Issue(filename, "", f"YAML parse error: {exc}", "schema"))
+            continue
+        if isinstance(doc, dict):
+            schema_versions[filename] = doc.get("schema_version")
+        result.issues.extend(_validate_one(filename, doc, schema_dir, registry))
+
     result.issues.extend(_cross_file_version(schema_versions))
     return result
 
 
 # Short keys the Databricks Job passes as JSON dict params.
-_SHORT_TO_FILE = {"grants": "grants.yaml", "policies": "policies.yaml", "tags": "tags.yaml"}
+_SHORT_TO_FILE = {"grants": "grants.yaml", "policies": "policies.yaml",
+                  "tags": "tags.yaml", "governance": "governance.yaml"}
 
 
 def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None) -> ValidationResult:
@@ -223,6 +247,14 @@ def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None) ->
         doc = by_file.get(filename)
         if doc is None:
             result.issues.append(Issue(filename, "", "document not provided", "schema"))
+            continue
+        if isinstance(doc, dict):
+            schema_versions[filename] = doc.get("schema_version")
+        result.issues.extend(_validate_one(filename, doc, schema_dir, registry))
+
+    for filename in _OPTIONAL_FILE_SCHEMA:
+        doc = by_file.get(filename)
+        if doc is None:
             continue
         if isinstance(doc, dict):
             schema_versions[filename] = doc.get("schema_version")

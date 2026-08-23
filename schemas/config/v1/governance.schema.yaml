@@ -1,0 +1,29 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://eastspring.governance/schemas/config/v1/governance.schema.yaml
+title: GovernanceYaml (v1.0)
+$comment: 'Optional. Full-sync guardrail: principals/schemas the framework must never revoke. The deploying identity and information_schema are protected automatically; list only additions here.'
+type: object
+additionalProperties: false
+required:
+- schema_version
+properties:
+  schema_version:
+    $ref: common.schema.yaml#/$defs/SchemaVersion
+  deployers:
+    $comment: Deployment identities/groups (service principal and/or group) that run GRANT/REVOKE; always protected, in addition to the runtime current_user().
+    type: array
+    uniqueItems: true
+    items:
+      $ref: common.schema.yaml#/$defs/NonEmptyString
+  admin_groups:
+    $comment: Account/metastore admin groups exempt from full-sync removal.
+    type: array
+    uniqueItems: true
+    items:
+      $ref: common.schema.yaml#/$defs/NonEmptyString
+  protected_schemas:
+    $comment: Extra schema names to protect (information_schema is always protected).
+    type: array
+    uniqueItems: true
+    items:
+      $ref: common.schema.yaml#/$defs/NonEmptyString

@@ -18,11 +18,8 @@ from .bundles import BundleError, expand_bundle
 from .model import RefObject, TargetGrant, TargetPolicy, TargetState, TargetTag
 from .naming import policy_name
 
-_SHORT = {"grants": "grants.yaml", "tags": "tags.yaml", "policies": "policies.yaml"}
-
-
-def _doc(docs: dict[str, Any], short: str) -> dict:
-    return docs.get(short) or docs.get(_SHORT[short]) or {}
+def _doc(docs: dict[str, Any], name: str) -> dict:
+    return docs.get(name) or {}
 
 
 def _scope_type(scope: str) -> str:

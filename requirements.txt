@@ -1,5 +1,9 @@
-# Eastspring governance framework — validation dependencies
+# Eastspring governance framework — dependencies
 jsonschema>=4.21     # JSON Schema Draft 2020-12 validation engine
 referencing>=0.33    # $ref resolution registry for jsonschema
 PyYAML>=6.0          # YAML loading (schemas + config) via safe_load
 pytest>=8.0          # test suite
+
+# pyspark is PROVIDED BY THE DATABRICKS RUNTIME — do NOT pip-install it on a cluster.
+# The reconcile modules (live/frames/diff) import it directly. For LOCAL testing only,
+# install it yourself: `pip install pyspark` (Spark 4.x needs Java 17+, e.g. JDK 25).
