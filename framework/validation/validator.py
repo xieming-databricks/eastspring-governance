@@ -68,6 +68,7 @@ _DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas" / "config"
 
 _FILE_SCHEMA = {
     "grants.yaml": "grants.schema.yaml",
+    "labels.yaml": "labels.schema.yaml",     # asset labels for grant matching (never materialized)
     "policies.yaml": "policies.schema.yaml",
     "tags.yaml": "tags.schema.yaml",
 }
@@ -119,6 +120,27 @@ def _check_tags(doc: Any) -> list[Issue]:
     return issues
 
 
+def _check_labels(doc: Any) -> list[Issue]:
+    """labels.yaml: a securable may appear only once (all its labels in one entry)."""
+    issues: list[Issue] = []
+    if not isinstance(doc, dict):
+        return issues
+    seen: dict[str, int] = {}
+    for i, entry in enumerate(_as_list(doc.get("labels"))):
+        if not isinstance(entry, dict):
+            continue
+        key = _ref_key(entry.get("securable"))
+        if key is None:
+            continue
+        if key in seen:
+            issues.append(Issue("labels.yaml", f"labels/{i}/securable",
+                                f"securable {key} is repeated (first at labels/{seen[key]}); "
+                                f"put all of its labels in one entry", "semantic"))
+        else:
+            seen[key] = i
+    return issues
+
+
 def _check_policies(doc: Any) -> list[Issue]:
     """policies.yaml: row-filter column aliases must be unique within a policy."""
     issues: list[Issue] = []
@@ -137,6 +159,7 @@ def _check_policies(doc: Any) -> list[Issue]:
 
 _FILE_SEMANTIC = {
     "grants.yaml": _check_grants,
+    "labels.yaml": _check_labels,
     "policies.yaml": _check_policies,
     "tags.yaml": _check_tags,
 }
@@ -226,7 +249,8 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
 
 # Short keys the Databricks Job passes as JSON dict params.
 _SHORT_TO_FILE = {"grants": "grants.yaml", "policies": "policies.yaml",
-                  "tags": "tags.yaml", "governance": "governance.yaml"}
+                  "tags": "tags.yaml", "labels": "labels.yaml",
+                  "governance": "governance.yaml"}
 
 
 def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None) -> ValidationResult:

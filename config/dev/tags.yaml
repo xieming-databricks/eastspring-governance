@@ -1,46 +1,8 @@
 schema_version: "1.0"
+# Column-routing tags, materialized to UC for ABAC masking / RLS. Asset selection for
+# grant rules lives in labels.yaml (labels — never materialized).
 tags:
-  # ---- Asset tags across EVERY non-column securable grain ----------------
-  # catalog
-  - securable: {type: catalog, name: asset_dev}
-    tags: {acm_business_function: investments}
-  # schema
-  - securable: {type: schema, name: asset_dev.gold}
-    tags: {acm_business_function: investments}
-  - securable: {type: schema, name: asset_dev.silver}
-    tags: {acm_business_function: performance_attribution}
-  # table
-  - securable: {type: table, name: asset_dev.gold.investment_accounts}
-    tags: {acm_business_function: investments}
-  - securable: {type: table, name: asset_dev.gold.restricted_positions}
-    tags: {acm_business_function: investments}
-  - securable: {type: table, name: asset_dev.gold.trades}
-    tags: {acm_business_function: investments}
-  - securable: {type: table, name: asset_dev.gold.nav_history}
-    tags: {acm_business_function: quants}
-  - securable: {type: table, name: asset_dev.gold.benchmark}
-    tags: {acm_business_function: quants}
-  - securable: {type: table, name: asset_dev.gold.positions}
-    tags: {acm_business_function: performance_attribution}
-  - securable: {type: table, name: asset_dev.gold.client_master}
-    tags: {acm_business_function: compliance}
-  # view
-  - securable: {type: view, name: asset_dev.gold.shared_reference}
-    tags: {acm_business_function: investments}
-  - securable: {type: view, name: asset_dev.gold.investment_summary}
-    tags: {acm_business_function: quants}
-  - securable: {type: view, name: asset_dev.gold.compliance_dashboard}
-    tags: {acm_business_function: compliance}
-  # function
-  - securable: {type: function, name: asset_dev.gold.valuation_label}
-    tags: {acm_business_function: investments}
-  # volume
-  - securable: {type: volume, name: asset_dev.gold.exports}
-    tags: {acm_business_function: investments}
-  - securable: {type: volume, name: asset_dev.gold.raw_drop}
-    tags: {acm_business_function: investments}
-
-  # ---- Column routing tags: every acm_pii_type value --------------------
+  # ---- acm_pii_type routes ----------------------------------------------
   - securable: {type: column, name: asset_dev.gold.investment_accounts.client_name}
     tags: {acm_pii_type: FULL_NAME}
   - securable: {type: column, name: asset_dev.gold.investment_accounts.client_id}
@@ -50,7 +12,7 @@ tags:
   - securable: {type: column, name: asset_dev.gold.trades.trader_name}
     tags: {acm_pii_type: FULL_NAME}
 
-  # ---- Column routing tags: every acm_rls dimension ---------------------
+  # ---- acm_rls dimensions -----------------------------------------------
   - securable: {type: column, name: asset_dev.gold.investment_accounts.region}
     tags: {acm_rls: region}
   - securable: {type: column, name: asset_dev.gold.investment_accounts.legal_entity}
@@ -60,7 +22,6 @@ tags:
   - securable: {type: column, name: asset_dev.gold.positions.legal_entity}
     tags: {acm_rls: legal_entity}
 
-  # ---- A column carrying BOTH a mask route and an RLS route -------------
-  #      (multi-key FrameworkTagMap on a single column securable).
+  # ---- a column carrying BOTH a mask route and an RLS route -------------
   - securable: {type: column, name: asset_dev.gold.client_master.tax_id}
     tags: {acm_pii_type: secret, acm_rls: region}

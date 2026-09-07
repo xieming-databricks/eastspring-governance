@@ -6,7 +6,7 @@ grant_rules:
     bundle: READ
     match:
       object_types: [table, view]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
     include:
       - {type: function, name: asset_prod.gold.valuation_label}
       - {type: volume, name: asset_prod.gold.exports}

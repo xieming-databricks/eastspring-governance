@@ -22,15 +22,17 @@ def _load(name: str) -> dict:
     return yaml.safe_load((BASELINE / name).read_text())
 
 
-def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict) -> Path:
+def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: dict) -> Path:
     (tmp / "grants.yaml").write_text(yaml.safe_dump(grants, sort_keys=False))
     (tmp / "policies.yaml").write_text(yaml.safe_dump(policies, sort_keys=False))
     (tmp / "tags.yaml").write_text(yaml.safe_dump(tags, sort_keys=False))
+    (tmp / "labels.yaml").write_text(yaml.safe_dump(labels, sort_keys=False))
     return tmp
 
 
-def _baseline() -> tuple[dict, dict, dict]:
-    return _load("grants.yaml"), _load("policies.yaml"), _load("tags.yaml")
+def _baseline() -> tuple[dict, dict, dict, dict]:
+    return (_load("grants.yaml"), _load("policies.yaml"),
+            _load("tags.yaml"), _load("labels.yaml"))
 
 
 # ---- valid baseline ------------------------------------------------------
@@ -44,31 +46,31 @@ def test_baseline_valid():
 
 # ---- corruptions ---------------------------------------------------------
 
-def _corrupt_bad_bundle(g, p, t):
+def _corrupt_bad_bundle(g, p, t, l):
     g["grant_rules"][0]["bundle"] = "SUPERUSER"          # not in enum
 
-def _corrupt_extra_field(g, p, t):
+def _corrupt_extra_field(g, p, t, l):
     g["grant_rules"][0]["surprise"] = True               # closed record
 
-def _corrupt_no_match_no_include(g, p, t):
+def _corrupt_no_match_no_include(g, p, t, l):
     g["grant_rules"][0].pop("match", None)
     g["grant_rules"][0].pop("include", None)
 
-def _corrupt_include_exclude_overlap(g, p, t):
+def _corrupt_include_exclude_overlap(g, p, t, l):
     obj = {"type": "table", "name": "asset_prod.gold.investment_accounts"}
     g["grant_rules"][0]["include"] = [obj]
     g["grant_rules"][0]["exclude"] = [obj]
 
-def _corrupt_bf_grain(g, p, t):
-    g["grant_rules"][0]["match"]["object_types"] = ["function"]   # BF not allowed on function
+def _corrupt_bf_grain(g, p, t, l):
+    g["grant_rules"][0]["match"]["object_types"] = ["function"]   # BF label not allowed on function
 
-def _corrupt_bad_fqn(g, p, t):
+def _corrupt_bad_fqn(g, p, t, l):
     g["grant_rules"][0]["include"] = [{"type": "table", "name": "only.two"}]
 
-def _corrupt_mask_fn_prefix(g, p, t):
+def _corrupt_mask_fn_prefix(g, p, t, l):
     p["column_mask_policies"][0]["function"] = "asset_prod.governance.mask_full_name"  # no acm_
 
-def _corrupt_rls_too_many(g, p, t):
+def _corrupt_rls_too_many(g, p, t, l):
     p["row_filter_policies"][0]["column_matching_tags"] = [
         {"condition": {"acm_rls": "region"}, "as": "a"},
         {"condition": {"acm_rls": "legal_entity"}, "as": "b"},
@@ -76,26 +78,40 @@ def _corrupt_rls_too_many(g, p, t):
         {"condition": {"acm_rls": "legal_entity"}, "as": "d"},
     ]
 
-def _corrupt_rls_dup_alias(g, p, t):
+def _corrupt_rls_dup_alias(g, p, t, l):
     p["row_filter_policies"][0]["column_matching_tags"] = [
         {"condition": {"acm_rls": "region"}, "as": "dup"},
         {"condition": {"acm_rls": "legal_entity"}, "as": "dup"},
     ]
 
-def _corrupt_bf_on_column(g, p, t):
+def _corrupt_bf_in_tags(g, p, t, l):
+    # business_function is a label, not a tag: tags.yaml no longer accepts it anywhere.
     t["tags"].append({
         "securable": {"type": "column", "name": "asset_prod.gold.investment_accounts.acct_no"},
         "tags": {"acm_business_function": "investments"},
     })
 
-def _corrupt_dup_securable(g, p, t):
-    t["tags"].append(copy.deepcopy(t["tags"][0]))        # repeat first securable
+def _corrupt_dup_securable(g, p, t, l):
+    t["tags"].append(copy.deepcopy(t["tags"][0]))        # repeat first tag securable
 
-def _corrupt_bad_version(g, p, t):
+def _corrupt_bad_version(g, p, t, l):
     t["schema_version"] = "2.0"
 
-def _corrupt_unknown_tag_key(g, p, t):
+def _corrupt_unknown_tag_key(g, p, t, l):
     t["tags"][0]["tags"] = {"acm_unknown": "x"}
+
+def _corrupt_label_on_column(g, p, t, l):
+    # labels attach to asset securables only (ObjectRef excludes column).
+    l["labels"].append({
+        "securable": {"type": "column", "name": "asset_prod.gold.investment_accounts.acct_no"},
+        "labels": {"business_function": "investments"},
+    })
+
+def _corrupt_dup_label_securable(g, p, t, l):
+    l["labels"].append(copy.deepcopy(l["labels"][0]))    # repeat first label securable
+
+def _corrupt_unknown_label_key(g, p, t, l):
+    l["labels"][0]["labels"] = {"data_product": "x"}     # only business_function is allowed
 
 
 CORRUPTIONS = {
@@ -108,18 +124,21 @@ CORRUPTIONS = {
     "mask_fn_prefix": _corrupt_mask_fn_prefix,
     "rls_too_many": _corrupt_rls_too_many,
     "rls_dup_alias": _corrupt_rls_dup_alias,
-    "bf_on_column": _corrupt_bf_on_column,
+    "bf_in_tags": _corrupt_bf_in_tags,
     "dup_securable": _corrupt_dup_securable,
     "bad_version": _corrupt_bad_version,
     "unknown_tag_key": _corrupt_unknown_tag_key,
+    "label_on_column": _corrupt_label_on_column,
+    "dup_label_securable": _corrupt_dup_label_securable,
+    "unknown_label_key": _corrupt_unknown_label_key,
 }
 
 
 @pytest.mark.parametrize("name", CORRUPTIONS)
 def test_corruption_caught(tmp_path, name):
-    g, p, t = _baseline()
-    CORRUPTIONS[name](g, p, t)
-    cfg = _write_config(tmp_path, g, p, t)
+    g, p, t, l = _baseline()
+    CORRUPTIONS[name](g, p, t, l)
+    cfg = _write_config(tmp_path, g, p, t, l)
     result = validate_dir(cfg)
     assert not result.ok, f"validator did NOT catch corruption {name!r}"
 
@@ -128,6 +147,19 @@ def test_missing_file(tmp_path):
     result = validate_dir(tmp_path)   # empty dir
     assert not result.ok
     assert any("file not found" in i.message for i in result.issues)
+
+
+def test_labels_required(tmp_path):
+    """labels.yaml is mandatory: an otherwise-valid config without it fails validation."""
+    g, p, t, _l = _baseline()
+    (tmp_path / "grants.yaml").write_text(yaml.safe_dump(g, sort_keys=False))
+    (tmp_path / "policies.yaml").write_text(yaml.safe_dump(p, sort_keys=False))
+    (tmp_path / "tags.yaml").write_text(yaml.safe_dump(t, sort_keys=False))
+    # labels.yaml deliberately omitted
+    result = validate_dir(tmp_path)
+    assert not result.ok
+    assert any(i.file == "labels.yaml" and "file not found" in i.message
+               for i in result.issues)
 
 
 # ---- optional governance.yaml -------------------------------------------

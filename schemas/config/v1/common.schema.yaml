@@ -63,13 +63,12 @@ $defs:
     - OWNER
     - ADMIN
   FrameworkManagedTagKey:
-    $comment: Closed enum; every member starts with 'acm_'. Extend per release as the vocabulary grows.
+    $comment: Closed enum of MATERIALIZED tag keys (written to UC); every member starts with 'acm_'. Asset selection for grants uses labels (labels.yaml), which are NOT tags and are never materialized.
     enum:
-    - acm_business_function
     - acm_pii_type
     - acm_rls
-  AcmBusinessFunction:
-    $comment: Release-populated vocabulary from the Access Matrix 'Business Functions' tab. Seeded with values observed in the design doc; extend for the actual release.
+  BusinessFunction:
+    $comment: Business-function vocabulary from the Access Matrix 'Business Functions' tab. Used as a config-only asset LABEL (labels.yaml, for grant selection) and as the ABAC policy table-matching key. Seeded from the design doc; extend for the actual release.
     enum:
     - investments
     - performance_attribution
@@ -86,14 +85,22 @@ $defs:
     enum:
     - region
     - legal_entity
+  LabelMap:
+    $comment: One or more config-only asset labels used to select securables in grant rules. Labels are NEVER materialized to Unity Catalog (unlike tags.yaml column tags). Grain-vs-key legality is enforced in grants.schema (if/then) and the semantic layer.
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      business_function:
+        $ref: '#/$defs/BusinessFunction'
   AssetTagMap:
-    $comment: One or more framework-managed asset-tag predicates (keys whose allowed grains include an object type). Grain-vs-key legality beyond column/asset split is enforced in the semantic (Static Validate) layer.
+    $comment: ABAC policy table-matching predicate (mask/RLS scoping by business_function). Referenced only by policies.yaml; policies are detect-only in v1. Grant selection uses LabelMap instead.
     type: object
     minProperties: 1
     additionalProperties: false
     properties:
       acm_business_function:
-        $ref: '#/$defs/AcmBusinessFunction'
+        $ref: '#/$defs/BusinessFunction'
   ObjectRef:
     $comment: Name shape is validated per declared type via oneOf.
     type: object

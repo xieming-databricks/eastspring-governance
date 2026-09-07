@@ -15,12 +15,12 @@ properties:
       $ref: '#/$defs/GrantRule'
 $defs:
   GrantMatch:
-    $comment: 'object_types must be a non-empty unique list; tags is a non-empty asset-tag map. Grain legality: acm_business_function permits only container/table/view grains, enforced via if/then.'
+    $comment: 'object_types must be a non-empty unique list; labels is a non-empty asset-label map (config-only, never materialized to UC). Grain legality: business_function permits only container/table/view grains, enforced via if/then.'
     type: object
     additionalProperties: false
     required:
     - object_types
-    - tags
+    - labels
     properties:
       object_types:
         type: array
@@ -28,13 +28,13 @@ $defs:
         uniqueItems: true
         items:
           $ref: common.schema.yaml#/$defs/ObjectType
-      tags:
-        $ref: common.schema.yaml#/$defs/AssetTagMap
+      labels:
+        $ref: common.schema.yaml#/$defs/LabelMap
     if:
       properties:
-        tags:
+        labels:
           required:
-          - acm_business_function
+          - business_function
     then:
       properties:
         object_types:

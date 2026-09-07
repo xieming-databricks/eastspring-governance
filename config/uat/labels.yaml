@@ -1,0 +1,10 @@
+schema_version: "1.0"
+# Asset labels select securables for grant rules (grants.yaml match.labels).
+# Config-only — NEVER written to Unity Catalog.
+labels:
+  - securable: {type: table, name: asset_prod.gold.investment_accounts}
+    labels: {business_function: investments}
+  - securable: {type: table, name: asset_prod.gold.restricted_positions}
+    labels: {business_function: investments}
+  - securable: {type: view, name: asset_prod.gold.shared_reference}
+    labels: {business_function: investments}

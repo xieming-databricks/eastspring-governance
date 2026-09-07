@@ -52,10 +52,13 @@ from pathlib import Path
 import yaml
 
 config_path = Path(dbutils.widgets.get("config_path"))
+# grants/labels/tags/policies are mandatory; labels.yaml holds asset labels for grant
+# matching (never materialized to UC).
 docs = {
     k: yaml.safe_load((config_path / f"{k}.yaml").read_text())
-    for k in ("grants", "tags", "policies")
+    for k in ("grants", "labels", "tags", "policies")
 }
+# governance.yaml is optional; load it if present.
 gov_path = config_path / "governance.yaml"
 if gov_path.exists():
     docs["governance"] = yaml.safe_load(gov_path.read_text())

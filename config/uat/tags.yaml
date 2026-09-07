@@ -1,11 +1,7 @@
 schema_version: "1.0"
+# Column-routing tags, materialized to UC for ABAC masking / RLS. Asset selection for
+# grant rules lives in labels.yaml (labels — never materialized).
 tags:
-  - securable: {type: table, name: asset_prod.gold.investment_accounts}
-    tags: {acm_business_function: investments}
-  - securable: {type: table, name: asset_prod.gold.restricted_positions}
-    tags: {acm_business_function: investments}
-  - securable: {type: view, name: asset_prod.gold.shared_reference}
-    tags: {acm_business_function: investments}
   - securable: {type: column, name: asset_prod.gold.investment_accounts.client_name}
     tags: {acm_pii_type: FULL_NAME}
   - securable: {type: column, name: asset_prod.gold.investment_accounts.region}

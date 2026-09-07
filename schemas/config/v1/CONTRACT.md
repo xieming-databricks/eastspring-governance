@@ -4,15 +4,16 @@ Extracted from *[Eastspring] Governance Framework: Technical Design* (v.1, 2026-
 
 ## File contract
 
-The compiler loads exactly these four files into one model per environment directory
-(e.g. `config/uat/`). A securable may appear only once in `tags.yaml`; all of its tags
-belong in that one entry. Repeating a securable or placing a block in the wrong file is a
-validation failure.
+The compiler loads these files into one model per environment directory (e.g. `config/uat/`).
+A securable may appear only once in `tags.yaml` (and only once in `labels.yaml`); all of its
+tags (or labels) belong in that one entry. Repeating a securable or placing a block in the
+wrong file is a validation failure.
 
 ```
 config/<env>/
-  grants.yaml       # Platform/Security: Grant Rules
-  tags.yaml         # Data Owners: governed-tag assignments
+  grants.yaml       # Platform/Security: Grant Rules (select objects by label / include)
+  labels.yaml       # Data Owners: asset labels for grant selection — NOT materialized to UC
+  tags.yaml         # Data Owners: governed column-tag assignments (materialized for ABAC)
   policies.yaml     # Platform/Security: ABAC policy bindings
   functions.sql     # Platform/DE/Security: executable entitlement behavior (SQL, not YAML)
 ```
@@ -32,6 +33,7 @@ definitions are held in `common.schema.yaml`. File-to-schema mapping:
 | Generated file | JSON Schema (YAML)     | Root type     |
 | :------------- | :-------------------- | :------------ |
 | `grants.yaml`   | `grants.schema.yaml`   | `GrantsYaml`   |
+| `labels.yaml`   | `labels.schema.yaml`   | `LabelsYaml`   |
 | `policies.yaml` | `policies.schema.yaml` | `PoliciesYaml` |
 | `tags.yaml`     | `tags.schema.yaml`     | `TagsYaml`     |
 
@@ -62,21 +64,18 @@ ObjectType = "catalog" | "schema" | "table" | "view" | "function" | "volume"
 SecurableType = ObjectType | "column"
 Bundle = "READ" | "WRITE" | "OWNER" | "ADMIN"
 
-FrameworkManagedTagKey = closed string enum in common.schema.json; every member starts with "acm_"
-AllowedTagValues<K> = closed key-dependent string enum for FrameworkManagedTagKey K
-AllowedTagGrains<K> = closed key-dependent subset of SecurableType for FrameworkManagedTagKey K
-FrameworkTagMap<G> = map<K, AllowedTagValues<K>>[1..*]
-  where K is a FrameworkManagedTagKey and G is in AllowedTagGrains<K>
-AssetTagMap = map<K, AllowedTagValues<K>>[1..*]
-  where K is a FrameworkManagedTagKey and AllowedTagGrains<K> contains an ObjectType member
-AcmBusinessFunction = AllowedTagValues<"acm_business_function">
+FrameworkManagedTagKey = closed enum of MATERIALIZED tag keys (acm_pii_type, acm_rls); every member starts with "acm_"
+AllowedTagValues<K> = closed key-dependent string enum for a tag/label key K
+BusinessFunction = business-function vocabulary (investments | performance_attribution | compliance | quants)
+LabelMap = {business_function: BusinessFunction}            # config-only asset label; NEVER materialized to UC
+AssetTagMap = {acm_business_function: BusinessFunction}     # ABAC policy table-matching only (policies.yaml)
 AcmPiiType = AllowedTagValues<"acm_pii_type">
 AcmRlsDimension = AllowedTagValues<"acm_rls">
 
 GrantMatch = {
   object_types: UniqueList<ObjectType>[1..*],
-  tags: AssetTagMap
-} where every tag key permits every selected object_type grain
+  labels: LabelMap
+} where business_function permits only catalog/schema/table/view grains
 
 GrantRule = {
   groups: UniqueList<NonEmptyString>[1..*],
@@ -86,9 +85,13 @@ GrantRule = {
   exclude?: UniqueList<ObjectRef>[0..*]
 } where match is present or include contains at least one object
 
+LabelAssignment = {
+  securable: ObjectRef,                             # asset securables only (never column)
+  labels: LabelMap
+}
 TagAssignment = {
-  securable: SecurableRef,
-  tags: FrameworkTagMap<securable.type>
+  securable: {type: "column", name: ColumnName},    # column securables only
+  tags: {acm_pii_type?: AcmPiiType, acm_rls?: AcmRlsDimension}[1..*]
 }
 
 ColumnMaskPolicy = {
@@ -117,6 +120,10 @@ PoliciesYaml = {
   column_mask_policies: List<ColumnMaskPolicy>[0..*],
   row_filter_policies: List<RowFilterPolicy>[0..*]
 }
+LabelsYaml = {
+  schema_version: SchemaVersion,
+  labels: List<LabelAssignment>[0..*]     # required file; may be empty for include-only configs
+}
 TagsYaml = {
   schema_version: SchemaVersion,
   tags: List<TagAssignment>[0..*]
@@ -128,8 +135,11 @@ TagsYaml = {
 - The framework-managed key vocabulary, each key's allowed values, and each key's allowed
   securable grains are closed JSON Schema `enum` definitions, not free-form strings. The
   schemas enumerate the approved vocabulary for the release.
-- `acm_business_function` is one asset-tag example. `acm_pii_type` and `acm_rls` are the
-  special column-routing keys used by this contract.
+- **Labels vs tags.** `labels.yaml` holds asset *labels* (`business_function`) used only to
+  *select* securables for grant rules; labels are config-only and are **never written to
+  Unity Catalog**. `tags.yaml` holds the column-routing *tags* (`acm_pii_type`, `acm_rls`)
+  that **are** materialized to UC for ABAC masking / RLS. `acm_business_function` survives
+  only as the ABAC policy table-matching key (`AssetTagMap`); policies are detect-only in v1.
 - For `ObjectRef` and `SecurableRef`, catalogs use `CatalogName`, schemas use `SchemaName`,
   columns use `ColumnName`, and all other types use `ObjectName`.
 - Tags outside the `acm_` namespace are not selected, assigned, or removed by this framework.

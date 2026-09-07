@@ -21,7 +21,8 @@ def _print(result: ValidationResult) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="validate", description=__doc__)
-    parser.add_argument("config_dir", help="directory holding grants/policies/tags.yaml")
+    parser.add_argument("config_dir",
+                        help="directory holding grants/policies/tags.yaml (+ optional labels.yaml, governance.yaml)")
     args = parser.parse_args(argv)
 
     result = validate_dir(args.config_dir)

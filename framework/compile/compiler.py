@@ -1,14 +1,17 @@
 """Compile validated config dicts into normalized target state.
 
 ``compile_config(docs)`` assumes ``docs`` already passed ``validate_docs``. It:
-  1. indexes tag assignments (the desired tag state),
-  2. for each grant rule, selects objects = tag-matched (by object_type + acm_* tags)
+  1. indexes asset LABELS (labels.yaml) for grant matching — labels are config-only
+     and are NEVER materialized to UC,
+  2. indexes column TAG assignments (tags.yaml) as the desired (materialized) tag state,
+  3. for each grant rule, selects objects = label-matched (by object_type + labels)
      + explicit includes - explicit excludes, then bundle-expands per group,
-  3. normalizes tags and ABAC policies,
-  4. collects referenced objects/functions for the preflight existence check.
+  4. normalizes ABAC policies,
+  5. collects referenced objects/functions for the preflight existence check.
 
-Grant object-matching uses the DESIRED tags in ``tags.yaml`` (config-only,
-deterministic) — never live tags.
+Grant object-matching uses the DESIRED labels in ``labels.yaml`` (config-only,
+deterministic) — never live tags. Tags in ``tags.yaml`` are column-routing tags
+(acm_pii_type / acm_rls) that DO get materialized.
 """
 from __future__ import annotations
 
@@ -31,20 +34,29 @@ def _scope_type(scope: str) -> str:
 def compile_config(docs: dict[str, Any]) -> TargetState:
     state = TargetState()
     grants_doc = _doc(docs, "grants")
+    labels_doc = _doc(docs, "labels")
     tags_doc = _doc(docs, "tags")
     policies_doc = _doc(docs, "policies")
 
-    # --- tags: desired assignments + index for grant matching ------------
-    tag_index: list[tuple[str, str, dict]] = []   # (securable_type, fqn, tags)
+    # --- labels: config-only asset labels for grant matching -------------
+    # Labels are NEVER materialized to UC — unlike tags, they do not become target
+    # state; they only select securables for grant rules.
+    label_index: list[tuple[str, str, dict]] = []   # (securable_type, fqn, labels)
+    for entry in labels_doc.get("labels", []):
+        sec = entry["securable"]
+        st, fqn, lb = sec["type"], sec["name"], entry["labels"]
+        label_index.append((st, fqn, lb))
+        state.refs.append(RefObject(st, fqn, "label"))
+
+    # --- tags: desired column-tag assignments (materialized to UC) -------
     for entry in tags_doc.get("tags", []):
         sec = entry["securable"]
         st, fqn, tg = sec["type"], sec["name"], entry["tags"]
-        tag_index.append((st, fqn, tg))
         state.refs.append(RefObject(st, fqn, "tag"))
         for k, v in tg.items():
             state.tags.append(TargetTag(st, fqn, k, v))
 
-    # --- grants: match -> include -> exclude -> bundle-expand ------------
+    # --- grants: match (by label) -> include -> exclude -> bundle-expand --
     grant_set: set[TargetGrant] = set()
     for i, rule in enumerate(grants_doc.get("grant_rules", [])):
         groups = rule["groups"]
@@ -54,9 +66,9 @@ def compile_config(docs: dict[str, Any]) -> TargetState:
         match = rule.get("match")
         if match:
             want_types = set(match["object_types"])
-            want_tags = match.get("tags", {})
-            for st, fqn, tg in tag_index:
-                if st in want_types and all(tg.get(k) == v for k, v in want_tags.items()):
+            want_labels = match.get("labels", {})
+            for st, fqn, lb in label_index:
+                if st in want_types and all(lb.get(k) == v for k, v in want_labels.items()):
                     objs.append((st, fqn))
         for inc in rule.get("include", []):
             objs.append((inc["type"], inc["name"]))

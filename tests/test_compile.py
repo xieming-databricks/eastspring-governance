@@ -73,42 +73,61 @@ def test_unsupported_combo_raises(bundle, obj):
 
 # ---- compile: matching / include / exclude / dedup ----------------------
 
-def _cfg(grant_rules, tags):
+def _cfg(grant_rules, labels=None, tags=None):
     return {
         "grants": {"schema_version": "1.0", "grant_rules": grant_rules},
-        "tags": {"schema_version": "1.0", "tags": tags},
+        "labels": {"schema_version": "1.0", "labels": labels or []},
+        "tags": {"schema_version": "1.0", "tags": tags or []},
         "policies": {"schema_version": "1.0"},
     }
 
 
-def test_match_selects_tagged_objects_only():
+def test_match_selects_labeled_objects_only():
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}},
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
         }],
-        tags=[
-            {"securable": {"type": "table", "name": "c.s.t1"}, "tags": {"acm_business_function": "investments"}},
-            {"securable": {"type": "table", "name": "c.s.t2"}, "tags": {"acm_business_function": "compliance"}},
-            {"securable": {"type": "view", "name": "c.s.v1"}, "tags": {"acm_business_function": "investments"}},
+        labels=[
+            {"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}},
+            {"securable": {"type": "table", "name": "c.s.t2"}, "labels": {"business_function": "compliance"}},
+            {"securable": {"type": "view", "name": "c.s.v1"}, "labels": {"business_function": "investments"}},
         ],
     )
     st = compile_config(docs)
     selected = {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"}
     assert "c.s.t1" in selected          # matched table
-    assert "c.s.t2" not in selected      # wrong tag value
+    assert "c.s.t2" not in selected      # wrong label value
     assert "c.s.v1" not in selected      # wrong object_type (view not requested)
+
+
+def test_labels_are_not_materialized_as_tags():
+    """Labels drive grant selection but must NEVER appear in the target tag state."""
+    docs = _cfg(
+        grant_rules=[{
+            "groups": ["g"], "bundle": "READ",
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
+        }],
+        labels=[{"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}}],
+        tags=[{"securable": {"type": "column", "name": "c.s.t1.name"}, "tags": {"acm_pii_type": "FULL_NAME"}}],
+    )
+    st = compile_config(docs)
+    assert {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"} == {"c.s.t1"}
+    # only the column tag is materialized; the business_function label is not
+    assert [(t.securable_type, t.securable_fqn, t.tag_key) for t in st.tags] == [
+        ("column", "c.s.t1.name", "acm_pii_type")]
+    assert all(t.tag_key != "business_function" for t in st.tags)
 
 
 def test_include_and_exclude():
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}},
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
             "include": [{"type": "function", "name": "c.s.f"}],
             "exclude": [{"type": "table", "name": "c.s.t1"}],
         }],
-        tags=[{"securable": {"type": "table", "name": "c.s.t1"}, "tags": {"acm_business_function": "investments"}}],
+        labels=[{"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}}],
     )
     st = compile_config(docs)
     fqns = {(g.securable_type, g.securable_fqn) for g in st.grants}
@@ -118,10 +137,10 @@ def test_include_and_exclude():
 
 def test_dedup_across_groups_and_rules():
     rule = {"groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}}}
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}}}
     docs = _cfg(
         grant_rules=[rule, dict(rule)],   # identical rule twice
-        tags=[{"securable": {"type": "table", "name": "c.s.t"}, "tags": {"acm_business_function": "investments"}}],
+        labels=[{"securable": {"type": "table", "name": "c.s.t"}, "labels": {"business_function": "investments"}}],
     )
     st = compile_config(docs)
     assert len(st.grants) == len(set(st.grants))    # no duplicates
@@ -131,7 +150,6 @@ def test_compile_error_surfaces_for_bad_bundle_object():
     docs = _cfg(
         grant_rules=[{"groups": ["g"], "bundle": "WRITE",
                       "include": [{"type": "function", "name": "c.s.f"}]}],
-        tags=[],
     )
     st = compile_config(docs)
     assert not st.ok and st.errors
@@ -141,7 +159,8 @@ def test_compile_error_surfaces_for_bad_bundle_object():
 
 def test_compile_config_dev():
     d = REPO / "config" / "dev"
-    docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text()) for k in ("grants", "tags", "policies")}
+    docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
+            for k in ("grants", "tags", "policies", "labels")}
     st = compile_config(docs)
     assert st.ok
     assert st.grants and st.tags and st.policies and st.refs

@@ -8,7 +8,7 @@ grant_rules:
     bundle: READ
     match:
       object_types: [table, view]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
     include:
       - {type: function, name: asset_dev.gold.valuation_label}
       - {type: volume, name: asset_dev.gold.exports}
@@ -21,21 +21,21 @@ grant_rules:
     bundle: WRITE
     match:
       object_types: [schema]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
 
   # 3. OWNER (deployment/owner create rights) at schema grain.
   - groups: [hera-adbk-investments-owner]
     bundle: OWNER
     match:
       object_types: [schema]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
 
   # 4. ADMIN (MANAGE) at catalog grain.
   - groups: [hera-adbk-investments-admin]
     bundle: ADMIN
     match:
       object_types: [catalog]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
 
   # 5. READ for performance_attribution — masked + unmasked.
   - groups:
@@ -44,21 +44,21 @@ grant_rules:
     bundle: READ
     match:
       object_types: [table, view]
-      tags: {acm_business_function: performance_attribution}
+      labels: {business_function: performance_attribution}
 
   # 6. WRITE for performance_attribution at table grain.
   - groups: [hera-adbk-performance-attribution-write]
     bundle: WRITE
     match:
       object_types: [table]
-      tags: {acm_business_function: performance_attribution}
+      labels: {business_function: performance_attribution}
 
   # 7. READ for compliance — match tables+views, add a specific view, exclude a table.
   - groups: [hera-adbk-compliance-read]
     bundle: READ
     match:
       object_types: [table, view]
-      tags: {acm_business_function: compliance}
+      labels: {business_function: compliance}
     include:
       - {type: view, name: asset_dev.gold.compliance_dashboard}
     exclude:
@@ -69,7 +69,7 @@ grant_rules:
     bundle: ADMIN
     match:
       object_types: [schema]
-      tags: {acm_business_function: compliance}
+      labels: {business_function: compliance}
 
   # 9. quants READ — include-only rule (no `match`): an explicit, hand-picked set
   #    spanning several object types.
@@ -87,14 +87,14 @@ grant_rules:
     bundle: WRITE
     match:
       object_types: [table]
-      tags: {acm_business_function: quants}
+      labels: {business_function: quants}
 
   # 11. Kitchen-sink match spanning ALL four BF-legal grains at once.
   - groups: [hera-adbk-investments-read]
     bundle: READ
     match:
       object_types: [catalog, schema, table, view]
-      tags: {acm_business_function: investments}
+      labels: {business_function: investments}
 
   # 12. Platform include-only rule spanning ALL SIX object types.
   - groups: [hera-adbk-platform-read]
