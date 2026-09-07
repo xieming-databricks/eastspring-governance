@@ -86,13 +86,15 @@ $defs:
     - region
     - legal_entity
   LabelMap:
-    $comment: One or more config-only asset labels used to select securables in grant rules. Labels are NEVER materialized to Unity Catalog (unlike tags.yaml column tags). Grain-vs-key legality is enforced in grants.schema (if/then) and the semantic layer.
+    $comment: One or more config-only asset labels used to select securables in grant rules. Keys are business_function and/or data_product; values are free-form non-empty strings (the approved vocabulary is validated at generation time, not by a closed enum here). Labels are NEVER materialized to Unity Catalog (unlike tags.yaml column tags).
     type: object
     minProperties: 1
     additionalProperties: false
     properties:
       business_function:
-        $ref: '#/$defs/BusinessFunction'
+        $ref: '#/$defs/NonEmptyString'
+      data_product:
+        $ref: '#/$defs/NonEmptyString'
   AssetTagMap:
     $comment: ABAC policy table-matching predicate (mask/RLS scoping by business_function). Referenced only by policies.yaml; policies are detect-only in v1. Grant selection uses LabelMap instead.
     type: object

@@ -67,7 +67,7 @@ Bundle = "READ" | "WRITE" | "OWNER" | "ADMIN"
 FrameworkManagedTagKey = closed enum of MATERIALIZED tag keys (acm_pii_type, acm_rls); every member starts with "acm_"
 AllowedTagValues<K> = closed key-dependent string enum for a tag/label key K
 BusinessFunction = business-function vocabulary (investments | performance_attribution | compliance | quants)
-LabelMap = {business_function: BusinessFunction}            # config-only asset label; NEVER materialized to UC
+LabelMap = {business_function?: NonEmptyString, data_product?: NonEmptyString}[1..*]   # config-only asset labels; values are free strings; NEVER materialized to UC
 AssetTagMap = {acm_business_function: BusinessFunction}     # ABAC policy table-matching only (policies.yaml)
 AcmPiiType = AllowedTagValues<"acm_pii_type">
 AcmRlsDimension = AllowedTagValues<"acm_rls">
@@ -135,11 +135,14 @@ TagsYaml = {
 - The framework-managed key vocabulary, each key's allowed values, and each key's allowed
   securable grains are closed JSON Schema `enum` definitions, not free-form strings. The
   schemas enumerate the approved vocabulary for the release.
-- **Labels vs tags.** `labels.yaml` holds asset *labels* (`business_function`) used only to
-  *select* securables for grant rules; labels are config-only and are **never written to
-  Unity Catalog**. `tags.yaml` holds the column-routing *tags* (`acm_pii_type`, `acm_rls`)
-  that **are** materialized to UC for ABAC masking / RLS. `acm_business_function` survives
-  only as the ABAC policy table-matching key (`AssetTagMap`); policies are detect-only in v1.
+- **Labels vs tags.** `labels.yaml` holds asset *labels* (`business_function` and/or
+  `data_product`) used only to *select* securables for grant rules; label values are
+  free-form non-empty strings (the approved set is enforced at generation time, not by a
+  closed enum). Labels are config-only and are **never written to Unity Catalog**.
+  `tags.yaml` holds the column-routing *tags* (`acm_pii_type`, `acm_rls`) that **are**
+  materialized to UC for ABAC masking / RLS. `acm_business_function` survives only as the
+  ABAC policy table-matching key (`AssetTagMap`, still a closed enum); policies are
+  detect-only in v1.
 - For `ObjectRef` and `SecurableRef`, catalogs use `CatalogName`, schemas use `SchemaName`,
   columns use `ColumnName`, and all other types use `ObjectName`.
 - Tags outside the `acm_` namespace are not selected, assigned, or removed by this framework.

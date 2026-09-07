@@ -119,6 +119,25 @@ def test_labels_are_not_materialized_as_tags():
     assert all(t.tag_key != "business_function" for t in st.tags)
 
 
+def test_data_product_label_selection():
+    """data_product is a valid label key (free-string value); grant selects by it, hyphenated catalog ok."""
+    docs = _cfg(
+        grant_rules=[{
+            "groups": ["hera-all-esg-read-unmasked"], "bundle": "READ",
+            "match": {"object_types": ["table", "view"], "labels": {"data_product": "investment_esg"}},
+        }],
+        labels=[
+            {"securable": {"type": "table", "name": "hera-dev.gold.esg_waci"},
+             "labels": {"data_product": "investment_esg"}},
+            {"securable": {"type": "table", "name": "hera-dev.silver.fact_price"},
+             "labels": {"data_product": "market_data"}},
+        ],
+    )
+    st = compile_config(docs)
+    selected = {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"}
+    assert selected == {"hera-dev.gold.esg_waci"}    # only the investment_esg-labeled table
+
+
 def test_include_and_exclude():
     docs = _cfg(
         grant_rules=[{

@@ -111,7 +111,7 @@ def _corrupt_dup_label_securable(g, p, t, l):
     l["labels"].append(copy.deepcopy(l["labels"][0]))    # repeat first label securable
 
 def _corrupt_unknown_label_key(g, p, t, l):
-    l["labels"][0]["labels"] = {"data_product": "x"}     # only business_function is allowed
+    l["labels"][0]["labels"] = {"not_a_label_key": "x"}  # only business_function / data_product allowed
 
 
 CORRUPTIONS = {
@@ -147,6 +147,17 @@ def test_missing_file(tmp_path):
     result = validate_dir(tmp_path)   # empty dir
     assert not result.ok
     assert any("file not found" in i.message for i in result.issues)
+
+
+def test_data_product_label_validates(tmp_path):
+    """business_function and data_product are both valid label keys; values are free strings."""
+    g, p, t, l = _baseline()
+    l["labels"].append({
+        "securable": {"type": "table", "name": "asset_prod.gold.esg_waci"},
+        "labels": {"data_product": "investment_esg"},
+    })
+    cfg = _write_config(tmp_path, g, p, t, l)
+    assert validate_dir(cfg).ok
 
 
 def test_labels_required(tmp_path):
