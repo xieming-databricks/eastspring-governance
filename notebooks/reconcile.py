@@ -3,9 +3,9 @@
 # MAGIC # Governance reconcile — full-sync a target catalog against the YAML config
 # MAGIC
 # MAGIC Compiles the validated YAML into target state, reads live state from
-# MAGIC `system.information_schema` (+ `SHOW POLICIES`), and emits a **per-dimension
-# MAGIC delta** (`change_type` = ADD / REMOVE / CHANGE) plus a **warning list** of
-# MAGIC referenced objects/functions that don't exist. It changes nothing.
+# MAGIC `system.information_schema` (+ `SHOW POLICIES`), emits a **per-dimension delta**
+# MAGIC (`change_type` = ADD / REMOVE / CHANGE) + a **warning list**, and — in the apply
+# MAGIC stage — executes the grant/tag delta as GRANT / REVOKE / ALTER…SET/UNSET TAGS.
 # MAGIC
 # MAGIC **v1 full-sync scope:** the **`target_catalog`** parameter is treated as
 # MAGIC framework-owned — every live grant in it that the YAML does not declare is a
@@ -16,11 +16,15 @@
 # MAGIC
 # MAGIC **`config_path`:** workspace path holding `grants.yaml` / `tags.yaml` /
 # MAGIC `policies.yaml` and an optional `governance.yaml`.
+# MAGIC
+# MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
+# MAGIC executes the grant + tag statements. Policies are always **detect-only**.
 
 # COMMAND ----------
 
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/uat")
 dbutils.widgets.text("target_catalog", "asset_prod")
+dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
 import sys
 from pathlib import Path
@@ -148,7 +152,7 @@ delta_frames = diff.diff_all(target, live_frames,
 delta_counts = {}
 for dim, df in delta_frames.items():
     rows = df.collect()
-    delta_counts[dim] = rows
+    delta_counts[dim] = [r.asDict() for r in rows]  # dicts: the shape apply/summary consume
     print(f"=== delta: {dim} ({len(rows)} change(s)) ===")
     show(rows)
 
@@ -164,6 +168,28 @@ show(warn_df)
 
 # COMMAND ----------
 
+# DBTITLE 1,Apply -> execute the grant + tag delta (GRANT / REVOKE / SET TAGS)
+# mode=plan (default) previews the SQL and runs nothing; mode=apply executes via spark.sql.
+# Policies are detect-only in v1 (shown in the delta above, never applied).
+from framework.apply import statement, executor
+
+mode = dbutils.widgets.get("mode").strip()
+dry_run = mode != "apply"
+
+planned = statement.plan_all(delta_counts)     # [(dimension, row, sql)] for grants + tags
+apply_results = executor.apply(spark, planned, dry_run=dry_run)  # noqa: F821
+apply_res_df = executor.results_frame(spark, apply_results)      # noqa: F821
+
+from collections import Counter as _Counter
+status_counts = dict(_Counter(r["status"] for r in apply_results))
+print(f"[apply] mode={mode} ({'DRY-RUN — nothing executed' if dry_run else 'EXECUTED'}) | "
+      f"{len(planned)} statement(s) | {status_counts}")
+if state.policies:
+    print(f"[apply] note: {len(state.policies)} policy delta(s) are detect-only — not applied")
+show(apply_res_df)
+
+# COMMAND ----------
+
 # DBTITLE 1,Summary
 from collections import Counter
 
@@ -173,3 +199,4 @@ for dim, rows in delta_counts.items():
     parts.append(f"{dim} {dict(c)}" if rows else f"{dim} up-to-date")
 print(f"RECONCILE OK | catalog={target_catalog} | " + " | ".join(parts)
       + f" | warnings={len(warnings)} | ignored_outside_catalog={len(outside)}")
+print(f"APPLY {mode.upper()} | {len(planned)} statement(s) | {status_counts}")
