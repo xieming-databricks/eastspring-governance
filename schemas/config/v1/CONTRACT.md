@@ -77,12 +77,14 @@ GrantMatch = {
   labels: LabelMap
 } where business_function permits only catalog/schema/table/view grains
 
+ExceptionRef = ObjectRef + {exp_id?: NonEmptyString}   # include/exclude entry; exp_id traces to an Access-Matrix exception (e.g. EX001)
 GrantRule = {
+  rule_id?: NonEmptyString,                            # source Access-Matrix Grant Rule id (e.g. GR001), for traceability
   groups: UniqueList<NonEmptyString>[1..*],
   bundle: Bundle,
   match?: GrantMatch,
-  include?: UniqueList<ObjectRef>[0..*],
-  exclude?: UniqueList<ObjectRef>[0..*]
+  include?: UniqueList<ExceptionRef>[0..*],
+  exclude?: UniqueList<ExceptionRef>[0..*]
 } where match is present or include contains at least one object
 
 LabelAssignment = {

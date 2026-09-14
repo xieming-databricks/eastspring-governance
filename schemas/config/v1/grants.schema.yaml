@@ -52,6 +52,9 @@ $defs:
     - groups
     - bundle
     properties:
+      rule_id:
+        $comment: Optional source Access-Matrix Grant Rule id (e.g. GR001), for traceability.
+        $ref: common.schema.yaml#/$defs/NonEmptyString
       groups:
         type: array
         minItems: 1
@@ -66,12 +69,12 @@ $defs:
         type: array
         uniqueItems: true
         items:
-          $ref: common.schema.yaml#/$defs/ObjectRef
+          $ref: '#/$defs/ExceptionRef'
       exclude:
         type: array
         uniqueItems: true
         items:
-          $ref: common.schema.yaml#/$defs/ObjectRef
+          $ref: '#/$defs/ExceptionRef'
     anyOf:
     - required:
       - match
@@ -80,3 +83,37 @@ $defs:
       properties:
         include:
           minItems: 1
+  ExceptionRef:
+    $comment: An include/exclude object ref, optionally tagged with its source Access-Matrix exception id (exp_id). Like ObjectRef; name shape validated per declared type via oneOf.
+    type: object
+    unevaluatedProperties: false
+    required:
+    - type
+    - name
+    properties:
+      type:
+        $ref: common.schema.yaml#/$defs/ObjectType
+      name:
+        type: string
+      exp_id:
+        $ref: common.schema.yaml#/$defs/NonEmptyString
+    oneOf:
+    - properties:
+        type:
+          const: catalog
+        name:
+          $ref: common.schema.yaml#/$defs/CatalogName
+    - properties:
+        type:
+          const: schema
+        name:
+          $ref: common.schema.yaml#/$defs/SchemaName
+    - properties:
+        type:
+          enum:
+          - table
+          - view
+          - function
+          - volume
+        name:
+          $ref: common.schema.yaml#/$defs/ObjectName
