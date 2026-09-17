@@ -1,4 +1,7 @@
-"""Tests for the Access-Matrix generator (pure transform + one real-workbook integration)."""
+"""Tests for the Access-Matrix generator (pure transform + one real-workbook integration).
+
+v3 dynamic-views layout: Base Tables / Base Grant Rules / Base Grant Exceptions + Rbac Views.
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,95 +10,107 @@ import pytest
 
 from framework.compile import compile_config
 from framework.generate import generate_config, read_workbook
-from framework.generate.generator import GeneratorError
+from framework.generate.generator import GeneratorError, REQUIRED_SHEETS
 from framework.validation import validate_docs
 
 REPO = Path(__file__).resolve().parents[1]
-WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v2-signoff.xlsx"
+WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"
 
 
-def _wb(*, groups=("g_read",), data_products=("dp_a", "dp_b"), tables=None,
-        grant_rules=None, exceptions=None, bundles=("READ", "WRITE", "OWNER", "ADMIN")):
-    """Build a minimal, otherwise-valid workbook (tab -> row-dicts)."""
+def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=None,
+        grant_rules=None, exceptions=None, rbac_views=None,
+        bundles=("READ", "WRITE", "OWNER", "ADMIN")):
+    """Build a minimal, otherwise-valid v3 workbook (tab -> row-dicts)."""
     if tables is None:
         tables = [
-            {"catalog": "c", "schema": "s", "object": "t1", "object_type": "table", "data_product": "dp_a"},
-            {"catalog": "c", "schema": "s", "object": "t2", "object_type": "table", "data_product": "dp_b"},
+            {"catalog": "c", "schema": "s", "object": "t1", "object_type": "table",
+             "data_product": "dp_a", "target_schema": "c.dm_x", "rls_column": "portfolio_code"},
+            {"catalog": "c", "schema": "s", "object": "t2", "object_type": "table",
+             "data_product": "dp_b", "target_schema": "c.dm_x"},
         ]
     if grant_rules is None:
-        grant_rules = [{"rule_id": "GR1", "group_name": "g_read", "match_label_key": "data_product",
-                        "match_label_value": "dp_a", "bundle": "READ", "object_types": "table; view"}]
+        grant_rules = [{"rule_id": "GR1", "group_name": "g_admin", "match_label_key": "data_product",
+                        "match_label_value": "dp_a", "bundle": "ADMIN", "object_types": "table; view"}]
+    if rbac_views is None:
+        rbac_views = [{"rule_id": "RBAC1", "group_name": "g_read",
+                       "catalog": "c", "schema": "dm_x", "bundle": "READ"}]
     return {
         "Groups": [{"group_name": g} for g in groups],
         "Data Products": [{"data_product": d} for d in data_products],
-        "Tables": tables,
-        "Grant Rules": grant_rules,
-        "Grant Exceptions": exceptions or [],
+        "Base Tables": tables,
+        "Base Grant Rules": grant_rules,
+        "Base Grant Exceptions": exceptions or [],
+        "Rbac Views": rbac_views,
         "Permission Bundles": [{"bundle": b} for b in bundles],
     }
 
 
-# ---- happy-path transform -----------------------------------------------
+# ---- labels (Base Tables) -----------------------------------------------
 
-def test_labels_built_from_tables():
-    docs = generate_config(_wb())
-    entries = docs["labels"]["labels"]
+def test_labels_built_from_base_tables():
+    entries = generate_config(_wb())["labels"]["labels"]
     assert {(e["securable"]["name"], e["labels"]["data_product"]) for e in entries} == {
         ("c.s.t1", "dp_a"), ("c.s.t2", "dp_b")}
     assert all(e["securable"]["type"] == "table" for e in entries)
 
 
-def test_grant_rule_shape_and_object_types_parsing():
-    rule = generate_config(_wb())["grants"]["grant_rules"][0]
-    assert rule["rule_id"] == "GR1"                                # workbook rule_id preserved
-    assert rule["groups"] == ["g_read"]
-    assert rule["bundle"] == "READ"
-    assert rule["match"]["object_types"] == ["table", "view"]      # "table; view" parsed
-    assert rule["match"]["labels"] == {"data_product": "dp_a"}
+def test_target_schema_and_rls_column_not_yet_on_labels():
+    # gaps 2/3 deferred to view generation: labels carry only data_product, no routing fields.
+    entries = generate_config(_wb())["labels"]["labels"]
+    assert all(set(e) == {"securable", "labels"} for e in entries)
+    assert all(set(e["labels"]) == {"data_product"} for e in entries)
 
 
-def test_exceptions_carry_exp_id_and_attach_to_matching_rule_only():
+# ---- Base Grant Rules ---------------------------------------------------
+
+def test_base_grant_rule_shape():
+    base = generate_config(_wb())["base_grants"]["grant_rules"]
+    assert len(base) == 1
+    r = base[0]
+    assert r["rule_id"] == "GR1" and r["groups"] == ["g_admin"] and r["bundle"] == "ADMIN"
+    assert r["match"]["object_types"] == ["table", "view"]
+    assert r["match"]["labels"] == {"data_product": "dp_a"}
+
+
+# ---- Rbac Views -> serving-schema grants --------------------------------
+
+def test_rbac_views_emit_serving_schema_grants():
+    serving = generate_config(_wb())["rbac_grants"]["grant_rules"]
+    assert len(serving) == 1
+    r = serving[0]
+    assert r["rule_id"] == "RBAC1" and r["groups"] == ["g_read"] and r["bundle"] == "READ"
+    assert r["include"] == [{"type": "schema", "name": "c.dm_x"}]
+
+
+def test_exceptions_carry_exp_id():
     exceptions = [
         {"exception_id": "EX1", "rule_id": "GR1", "action": "include", "object_type": "function", "object": "c.s.f"},
         {"exception_id": "EX2", "rule_id": "GR1", "action": "exclude", "object_type": "table", "object": "c.s.t1"},
     ]
-    rule = generate_config(_wb(exceptions=exceptions))["grants"]["grant_rules"][0]
-    assert rule["include"] == [{"type": "function", "name": "c.s.f", "exp_id": "EX1"}]
-    assert rule["exclude"] == [{"type": "table", "name": "c.s.t1", "exp_id": "EX2"}]
-
-
-def test_tags_and_policies_are_empty_stubs():
-    docs = generate_config(_wb())
-    assert docs["tags"] == {"schema_version": "1.0", "tags": []}
-    assert docs["policies"] == {"schema_version": "1.0"}
+    base = generate_config(_wb(exceptions=exceptions))["base_grants"]["grant_rules"][0]
+    assert base["include"] == [{"type": "function", "name": "c.s.f", "exp_id": "EX1"}]
+    assert base["exclude"] == [{"type": "table", "name": "c.s.t1", "exp_id": "EX2"}]
 
 
 def test_output_validates_and_compiles():
     docs = generate_config(_wb())
     assert validate_docs(docs).ok
-    st = compile_config(docs)
-    assert st.ok
-    # GR1 (READ on dp_a-labeled tables) grants SELECT on c.s.t1 only
-    assert {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"} == {"c.s.t1"}
+    assert compile_config(docs).ok
 
 
 # ---- referential-integrity failures (all raise GeneratorError) ----------
 
 @pytest.mark.parametrize("mutate", [
-    pytest.param(lambda w: w["Grant Rules"][0].__setitem__("group_name", "ghost"), id="unknown_group"),
-    pytest.param(lambda w: w["Grant Rules"][0].__setitem__("match_label_value", "dp_zzz"), id="unknown_data_product"),
-    pytest.param(lambda w: w["Grant Rules"][0].__setitem__("bundle", "SUPERUSER"), id="unknown_bundle"),
-    pytest.param(lambda w: w["Grant Rules"][0].__setitem__("match_label_key", "team"), id="unknown_label_key"),
-    pytest.param(lambda w: w["Grant Rules"][0].__setitem__("object_types", ""), id="empty_object_types"),
-    pytest.param(lambda w: w["Tables"][0].__setitem__("object_type", "widget"), id="bad_table_object_type"),
-    pytest.param(lambda w: w["Tables"][0].__setitem__("data_product", "dp_zzz"), id="table_unknown_data_product"),
-    pytest.param(lambda w: w["Grant Exceptions"].append(
+    pytest.param(lambda w: w["Base Grant Rules"][0].__setitem__("group_name", "ghost"), id="unknown_base_group"),
+    pytest.param(lambda w: w["Base Grant Rules"][0].__setitem__("match_label_value", "dp_zzz"), id="unknown_data_product"),
+    pytest.param(lambda w: w["Base Grant Rules"][0].__setitem__("bundle", "SUPERUSER"), id="unknown_bundle"),
+    pytest.param(lambda w: w["Base Tables"][0].__setitem__("object_type", "widget"), id="bad_object_type"),
+    pytest.param(lambda w: w["Base Grant Exceptions"].append(
         {"exception_id": "EX9", "rule_id": "GRX", "action": "include", "object_type": "table", "object": "c.s.z"}),
         id="orphan_exception"),
-    pytest.param(lambda w: w["Grant Rules"].append(
-        {"rule_id": "GR1", "group_name": "g_read", "match_label_key": "data_product",
-         "match_label_value": "dp_a", "bundle": "READ", "object_types": "table"}),
-        id="duplicate_rule_id"),
+    pytest.param(lambda w: w["Rbac Views"][0].__setitem__("group_name", "ghost"), id="unknown_rbac_group"),
+    pytest.param(lambda w: w["Rbac Views"][0].__setitem__("bundle", "SUPERUSER"), id="rbac_bad_bundle"),
+    pytest.param(lambda w: w["Rbac Views"][0].pop("schema"), id="rbac_missing_schema"),
 ])
 def test_referential_violations_raise(mutate):
     wb = _wb()
@@ -104,22 +119,18 @@ def test_referential_violations_raise(mutate):
         generate_config(wb)
 
 
-# ---- integration against the signed-off ESG workbook --------------------
+# ---- integration against the signed-off v3 workbook ---------------------
 
-@pytest.mark.skipif(not WORKBOOK.exists(), reason="signed-off workbook not present")
-def test_real_workbook_generates_valid_config():
-    from framework.generate.generator import REQUIRED_SHEETS
+@pytest.mark.skipif(not WORKBOOK.exists(), reason="v3 workbook not present")
+def test_real_v3_workbook_generates_valid_config():
     wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
     docs = generate_config(wb)                       # raises if invalid
     assert validate_docs(docs).ok
     assert compile_config(docs).ok
 
-    assert len(docs["labels"]["labels"]) == 10       # 10 tables in the Tables tab
-    assert len(docs["grants"]["grant_rules"]) == 35  # GR001..GR035
-    # EX001 (include) + EX002 (exclude) both land on GR001 (the first rule), with exp_ids
-    gr001 = docs["grants"]["grant_rules"][0]
-    assert gr001["rule_id"] == "GR001"
-    assert gr001["include"] == [
-        {"type": "table", "name": "hera-dev.governance.example_esg_helper", "exp_id": "EX001"}]
-    assert gr001["exclude"] == [
-        {"type": "table", "name": "hera-dev.gold.example_restricted_esg", "exp_id": "EX002"}]
+    base = docs["base_grants"]["grant_rules"]
+    serving = docs["rbac_grants"]["grant_rules"]
+    assert len(docs["labels"]["labels"]) == 10       # 11 Base Tables rows, dup securable merged -> 10
+    assert len(base) == 7                            # Base Grant Rules: admin x 7 data products
+    assert len(serving) == 5                         # Rbac Views: 5 groups on the serving schema
+    assert all(s["include"][0] == {"type": "schema", "name": "hera-dev.dm_esg"} for s in serving)

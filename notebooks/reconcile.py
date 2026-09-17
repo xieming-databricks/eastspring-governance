@@ -52,17 +52,20 @@ from pathlib import Path
 import yaml
 
 config_path = Path(dbutils.widgets.get("config_path"))
-# grants/labels/tags/policies are mandatory; labels.yaml holds asset labels for grant
+# base_grants/labels/tags/policies are mandatory; labels.yaml holds asset labels for grant
 # matching (never materialized to UC).
 docs = {
     k: yaml.safe_load((config_path / f"{k}.yaml").read_text())
-    for k in ("grants", "labels", "tags", "policies")
+    for k in ("base_grants", "labels", "tags", "policies")
 }
-# governance.yaml is optional; load it if present.
-gov_path = config_path / "governance.yaml"
-if gov_path.exists():
-    docs["governance"] = yaml.safe_load(gov_path.read_text())
-print(f"[reconcile] config_source={config_path} | governance={'yes' if 'governance' in docs else 'no'}")
+# rbac_grants.yaml (serving-schema/view grants) and governance.yaml are optional; load if present.
+for opt in ("rbac_grants", "governance"):
+    opt_path = config_path / f"{opt}.yaml"
+    if opt_path.exists():
+        docs[opt] = yaml.safe_load(opt_path.read_text())
+print(f"[reconcile] config_source={config_path} | "
+      f"rbac_grants={'yes' if 'rbac_grants' in docs else 'no'} | "
+      f"governance={'yes' if 'governance' in docs else 'no'}")
 
 # COMMAND ----------
 

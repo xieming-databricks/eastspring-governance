@@ -6,8 +6,10 @@ into the docs-shaped dict the framework already understands
 ``validation.validate_docs`` and ``compile.compile_config`` consume. No Spark, no Excel here,
 so it is unit-testable with plain dicts.
 
-Scope is asset-level: ``labels.yaml`` (object selection) and ``grants.yaml`` are populated;
-``tags.yaml`` / ``policies.yaml`` are emitted as valid empty stubs (ABAC tabs are future work).
+v3 dynamic-views layout: ``labels.yaml`` from Base Tables (object selection); ``grants.yaml`` from
+Base Grant Rules (base-table grants — e.g. admin/owner) + Rbac Views (end-user grants on the serving
+SCHEMA). ``tags.yaml`` / ``policies.yaml`` are valid empty stubs. Base Tables' ``target_schema`` /
+``rls_column`` (view destination + RLS column) are inputs to view generation and are NOT consumed here yet.
 The workbook's ``data_product`` values are free strings in the schema, so their approved set is
 enforced HERE (against the Data Products tab) — that was the deal when we chose open-string
 labels. Any referential problem raises :class:`GeneratorError` listing every problem; nothing
@@ -28,15 +30,16 @@ KNOWN_BUNDLES = frozenset({"READ", "WRITE", "OWNER", "ADMIN"})
 LABEL_KEYS = frozenset({"business_function", "data_product"})
 OBJECT_TYPES = frozenset({"catalog", "schema", "table", "view", "function", "volume"})
 
-# Workbook tabs this generator consumes (asset-level scope).
+# Workbook tabs this generator consumes (v3 dynamic-views layout).
 T_GROUPS = "Groups"
 T_DATA_PRODUCTS = "Data Products"
-T_TABLES = "Tables"
-T_GRANT_RULES = "Grant Rules"
-T_GRANT_EXCEPTIONS = "Grant Exceptions"
+T_TABLES = "Base Tables"
+T_GRANT_RULES = "Base Grant Rules"
+T_GRANT_EXCEPTIONS = "Base Grant Exceptions"
 T_PERMISSION_BUNDLES = "Permission Bundles"
+T_RBAC_VIEWS = "Rbac Views"
 REQUIRED_SHEETS = (T_GROUPS, T_DATA_PRODUCTS, T_TABLES, T_GRANT_RULES,
-                   T_GRANT_EXCEPTIONS, T_PERMISSION_BUNDLES)
+                   T_GRANT_EXCEPTIONS, T_PERMISSION_BUNDLES, T_RBAC_VIEWS)
 
 Docs = dict[str, dict[str, Any]]
 
@@ -75,11 +78,11 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
         cat, sch, obj = r.get("catalog"), r.get("schema"), r.get("object")
         otype, dp = r.get("object_type"), r.get("data_product")
         if otype not in OBJECT_TYPES:
-            problems.append(f"Tables row {i}: object_type {otype!r} not one of {sorted(OBJECT_TYPES)}")
+            problems.append(f"{T_TABLES} row {i}: object_type {otype!r} not one of {sorted(OBJECT_TYPES)}")
         if dp not in data_products:
-            problems.append(f"Tables row {i}: data_product {dp!r} not in '{T_DATA_PRODUCTS}' tab")
+            problems.append(f"{T_TABLES} row {i}: data_product {dp!r} not in '{T_DATA_PRODUCTS}' tab")
         if not (cat and sch and obj):
-            problems.append(f"Tables row {i}: missing catalog/schema/object")
+            problems.append(f"{T_TABLES} row {i}: missing catalog/schema/object")
             continue
         labels_by_sec.setdefault((otype, f"{cat}.{sch}.{obj}"), {})["data_product"] = dp
     labels_entries = [
@@ -94,12 +97,12 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
         otype, obj = r.get("object_type"), r.get("object")
         eid = r.get("exception_id")
         if rid not in rule_ids:
-            problems.append(f"Grant Exceptions {eid}: rule_id {rid!r} not in '{T_GRANT_RULES}' tab")
+            problems.append(f"{T_GRANT_EXCEPTIONS} {eid}: rule_id {rid!r} not in '{T_GRANT_RULES}' tab")
         if action not in ("include", "exclude"):
-            problems.append(f"Grant Exceptions {eid}: action {action!r} must be include/exclude")
+            problems.append(f"{T_GRANT_EXCEPTIONS} {eid}: action {action!r} must be include/exclude")
             continue
         if otype not in OBJECT_TYPES:
-            problems.append(f"Grant Exceptions {eid}: object_type {otype!r} invalid")
+            problems.append(f"{T_GRANT_EXCEPTIONS} {eid}: object_type {otype!r} invalid")
         entry: dict[str, Any] = {"type": otype, "name": obj}
         if eid:
             entry["exp_id"] = eid                       # trace back to the Access-Matrix exception
@@ -112,20 +115,20 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
         mlk, mlv, bundle = r.get("match_label_key"), r.get("match_label_value"), r.get("bundle")
         otypes = _parse_object_types(r.get("object_types"))
         if gname not in groups:
-            problems.append(f"Grant Rules {rid}: group_name {gname!r} not in '{T_GROUPS}' tab")
+            problems.append(f"{T_GRANT_RULES} {rid}: group_name {gname!r} not in '{T_GROUPS}' tab")
         if bundle not in KNOWN_BUNDLES:
-            problems.append(f"Grant Rules {rid}: bundle {bundle!r} not one of {sorted(KNOWN_BUNDLES)}")
+            problems.append(f"{T_GRANT_RULES} {rid}: bundle {bundle!r} not one of {sorted(KNOWN_BUNDLES)}")
         elif bundles and bundle not in bundles:
-            problems.append(f"Grant Rules {rid}: bundle {bundle!r} not in '{T_PERMISSION_BUNDLES}' tab")
+            problems.append(f"{T_GRANT_RULES} {rid}: bundle {bundle!r} not in '{T_PERMISSION_BUNDLES}' tab")
         if mlk not in LABEL_KEYS:
-            problems.append(f"Grant Rules {rid}: match_label_key {mlk!r} not one of {sorted(LABEL_KEYS)}")
+            problems.append(f"{T_GRANT_RULES} {rid}: match_label_key {mlk!r} not one of {sorted(LABEL_KEYS)}")
         if mlk == "data_product" and mlv not in data_products:
-            problems.append(f"Grant Rules {rid}: match_label_value {mlv!r} not in '{T_DATA_PRODUCTS}' tab")
+            problems.append(f"{T_GRANT_RULES} {rid}: match_label_value {mlv!r} not in '{T_DATA_PRODUCTS}' tab")
         if not otypes:
-            problems.append(f"Grant Rules {rid}: object_types is empty")
+            problems.append(f"{T_GRANT_RULES} {rid}: object_types is empty")
         for ot in otypes:
             if ot not in OBJECT_TYPES:
-                problems.append(f"Grant Rules {rid}: object_type {ot!r} invalid")
+                problems.append(f"{T_GRANT_RULES} {rid}: object_type {ot!r} invalid")
 
         rule: dict[str, Any] = {}
         if rid:
@@ -140,12 +143,41 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
             rule["exclude"] = exc["exclude"]
         grant_rules.append(rule)
 
+    # ---- rbac_grants.yaml from the Rbac Views tab (serving-schema grants) -
+    # End-user groups get their bundle on the serving SCHEMA (schema-grain include).
+    # The views inside that schema are produced by view generation (not implemented here);
+    # the schema itself is provisioned by Terraform.
+    rbac_rules: list[dict[str, Any]] = []
+    _rbac_ids = [r["rule_id"] for r in wb.get(T_RBAC_VIEWS, []) if r.get("rule_id")]
+    for dup in sorted({x for x in _rbac_ids if _rbac_ids.count(x) > 1}):
+        problems.append(f"'{T_RBAC_VIEWS}' tab: duplicate rule_id {dup!r}")
+    for r in wb.get(T_RBAC_VIEWS, []):
+        rid, gname = r.get("rule_id"), r.get("group_name")
+        cat, sch, bundle = r.get("catalog"), r.get("schema"), r.get("bundle")
+        if gname not in groups:
+            problems.append(f"{T_RBAC_VIEWS} {rid}: group_name {gname!r} not in '{T_GROUPS}' tab")
+        if bundle not in KNOWN_BUNDLES:
+            problems.append(f"{T_RBAC_VIEWS} {rid}: bundle {bundle!r} not one of {sorted(KNOWN_BUNDLES)}")
+        elif bundles and bundle not in bundles:
+            problems.append(f"{T_RBAC_VIEWS} {rid}: bundle {bundle!r} not in '{T_PERMISSION_BUNDLES}' tab")
+        if not (cat and sch):
+            problems.append(f"{T_RBAC_VIEWS} {rid}: missing catalog/schema")
+            continue
+        vrule: dict[str, Any] = {}
+        if rid:
+            vrule["rule_id"] = rid
+        vrule["groups"] = [gname]
+        vrule["bundle"] = bundle
+        vrule["include"] = [{"type": "schema", "name": f"{cat}.{sch}"}]
+        rbac_rules.append(vrule)
+
     if problems:
         raise GeneratorError(
             "workbook cannot be converted to a valid config:\n  - " + "\n  - ".join(problems))
 
     docs: Docs = {
-        "grants": {"schema_version": SCHEMA_VERSION, "grant_rules": grant_rules},
+        "base_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": grant_rules},
+        "rbac_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": rbac_rules},
         "labels": {"schema_version": SCHEMA_VERSION, "labels": labels_entries},
         "tags": {"schema_version": SCHEMA_VERSION, "tags": []},          # asset-level scope: empty stub
         "policies": {"schema_version": SCHEMA_VERSION},                  # asset-level scope: empty stub
@@ -160,8 +192,8 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
 
 
 # File name per docs short-key, in a stable write order.
-_FILES = (("grants", "grants.yaml"), ("labels", "labels.yaml"),
-          ("tags", "tags.yaml"), ("policies", "policies.yaml"))
+_FILES = (("base_grants", "base_grants.yaml"), ("rbac_grants", "rbac_grants.yaml"),
+          ("labels", "labels.yaml"), ("tags", "tags.yaml"), ("policies", "policies.yaml"))
 
 
 def write_config(docs: Docs, out_dir: str | Path) -> Path:

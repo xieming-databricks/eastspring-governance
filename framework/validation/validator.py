@@ -67,14 +67,15 @@ class ValidationResult:
 _DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas" / "config" / "v1"
 
 _FILE_SCHEMA = {
-    "grants.yaml": "grants.schema.yaml",
-    "labels.yaml": "labels.schema.yaml",     # asset labels for grant matching (never materialized)
+    "base_grants.yaml": "grants.schema.yaml",   # base-table grant rules (was grants.yaml)
+    "labels.yaml": "labels.schema.yaml",        # asset labels for grant matching (never materialized)
     "policies.yaml": "policies.schema.yaml",
     "tags.yaml": "tags.schema.yaml",
 }
 
 # Validated only if present (absence is not an error), unlike the required files above.
 _OPTIONAL_FILE_SCHEMA = {
+    "rbac_grants.yaml": "grants.schema.yaml",   # serving-schema (view) grants; absent for base-only configs
     "governance.yaml": "governance.schema.yaml",
 }
 
@@ -158,7 +159,8 @@ def _check_policies(doc: Any) -> list[Issue]:
 
 
 _FILE_SEMANTIC = {
-    "grants.yaml": _check_grants,
+    "base_grants.yaml": _check_grants,
+    "rbac_grants.yaml": _check_grants,
     "labels.yaml": _check_labels,
     "policies.yaml": _check_policies,
     "tags.yaml": _check_tags,
@@ -248,8 +250,8 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
 
 
 # Short keys the Databricks Job passes as JSON dict params.
-_SHORT_TO_FILE = {"grants": "grants.yaml", "policies": "policies.yaml",
-                  "tags": "tags.yaml", "labels": "labels.yaml",
+_SHORT_TO_FILE = {"base_grants": "base_grants.yaml", "rbac_grants": "rbac_grants.yaml",
+                  "policies": "policies.yaml", "tags": "tags.yaml", "labels": "labels.yaml",
                   "governance": "governance.yaml"}
 
 

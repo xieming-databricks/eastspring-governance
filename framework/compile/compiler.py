@@ -33,7 +33,8 @@ def _scope_type(scope: str) -> str:
 
 def compile_config(docs: dict[str, Any]) -> TargetState:
     state = TargetState()
-    grants_doc = _doc(docs, "grants")
+    base_grants = _doc(docs, "base_grants")
+    rbac_grants = _doc(docs, "rbac_grants")
     labels_doc = _doc(docs, "labels")
     tags_doc = _doc(docs, "tags")
     policies_doc = _doc(docs, "policies")
@@ -56,9 +57,11 @@ def compile_config(docs: dict[str, Any]) -> TargetState:
         for k, v in tg.items():
             state.tags.append(TargetTag(st, fqn, k, v))
 
-    # --- grants: match (by label) -> include -> exclude -> bundle-expand --
+    # --- grants: base (base_grants.yaml) + serving-schema (rbac_grants.yaml) ---
+    # Both are grant_rules and compile identically (bundle-expand into TargetGrants).
     grant_set: set[TargetGrant] = set()
-    for i, rule in enumerate(grants_doc.get("grant_rules", [])):
+    all_rules = base_grants.get("grant_rules", []) + rbac_grants.get("grant_rules", [])
+    for i, rule in enumerate(all_rules):
         groups = rule["groups"]
         bundle = rule["bundle"]
         objs: list[tuple[str, str]] = []

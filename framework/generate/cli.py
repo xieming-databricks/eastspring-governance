@@ -32,10 +32,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     n_labels = len(docs["labels"]["labels"])
-    n_rules = len(docs["grants"]["grant_rules"])
+    n_base = len(docs["base_grants"]["grant_rules"])
+    n_rbac = len(docs["rbac_grants"]["grant_rules"])
     n_exc = sum(len(r.get("include", [])) + len(r.get("exclude", []))
-                for r in docs["grants"]["grant_rules"])
-    summary = f"{n_labels} labels, {n_rules} grant rules, {n_exc} exception object(s)"
+                for r in docs["base_grants"]["grant_rules"])
+    summary = (f"{n_labels} labels, {n_base} base grants, {n_rbac} rbac grants, "
+               f"{n_exc} exception object(s)")
 
     if args.check:
         print(f"OK {args.workbook} — {summary} (not written)")

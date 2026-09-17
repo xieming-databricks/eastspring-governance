@@ -23,7 +23,7 @@ def _load(name: str) -> dict:
 
 
 def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: dict) -> Path:
-    (tmp / "grants.yaml").write_text(yaml.safe_dump(grants, sort_keys=False))
+    (tmp / "base_grants.yaml").write_text(yaml.safe_dump(grants, sort_keys=False))
     (tmp / "policies.yaml").write_text(yaml.safe_dump(policies, sort_keys=False))
     (tmp / "tags.yaml").write_text(yaml.safe_dump(tags, sort_keys=False))
     (tmp / "labels.yaml").write_text(yaml.safe_dump(labels, sort_keys=False))
@@ -31,7 +31,7 @@ def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: d
 
 
 def _baseline() -> tuple[dict, dict, dict, dict]:
-    return (_load("grants.yaml"), _load("policies.yaml"),
+    return (_load("base_grants.yaml"), _load("policies.yaml"),
             _load("tags.yaml"), _load("labels.yaml"))
 
 

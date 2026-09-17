@@ -75,7 +75,7 @@ def test_unsupported_combo_raises(bundle, obj):
 
 def _cfg(grant_rules, labels=None, tags=None):
     return {
-        "grants": {"schema_version": "1.0", "grant_rules": grant_rules},
+        "base_grants": {"schema_version": "1.0", "grant_rules": grant_rules},
         "labels": {"schema_version": "1.0", "labels": labels or []},
         "tags": {"schema_version": "1.0", "tags": tags or []},
         "policies": {"schema_version": "1.0"},
@@ -179,7 +179,7 @@ def test_compile_error_surfaces_for_bad_bundle_object():
 def test_compile_config_dev():
     d = REPO / "config" / "dev"
     docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
-            for k in ("grants", "tags", "policies", "labels")}
+            for k in ("base_grants", "tags", "policies", "labels")}
     st = compile_config(docs)
     assert st.ok
     assert st.grants and st.tags and st.policies and st.refs
