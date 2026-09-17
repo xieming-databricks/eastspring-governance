@@ -11,16 +11,18 @@ wrong file is a validation failure.
 
 ```
 config/<env>/
-  base_grants.yaml  # Platform/Security: base-table Grant Rules (select objects by label / include)
-  rbac_grants.yaml  # Platform/Security: serving-schema (view) grants — optional; view-based configs
-  labels.yaml       # Data Owners: asset labels for grant selection — NOT materialized to UC
-  tags.yaml         # Data Owners: governed column-tag assignments (materialized for ABAC)
-  policies.yaml     # Platform/Security: ABAC policy bindings
-  functions.sql     # Platform/DE/Security: executable entitlement behavior (SQL, not YAML)
+  base_grants.yaml       # Platform/Security: base-table Grant Rules (select objects by label / include)
+  rbac_view_grants.yaml  # Platform/Security: serving-schema (view) grants — optional; view-based configs
+  rbac_views.yaml        # expected dynamic views (base table -> serving schema) — optional; for reconcile detection
+  labels.yaml            # Data Owners: asset labels for grant selection — NOT materialized to UC
+  tags.yaml              # Data Owners: governed column-tag assignments (materialized for ABAC)
+  policies.yaml          # Platform/Security: ABAC policy bindings
+  functions.sql          # Platform/DE/Security: executable entitlement behavior (SQL, not YAML)
 ```
 
-`base_grants.yaml` and `rbac_grants.yaml` share the same schema (`GrantsYaml`); the compiler
-merges both into one grant set. `rbac_grants.yaml` is optional (absent for base-only configs).
+`base_grants.yaml` and `rbac_view_grants.yaml` share the same schema (`GrantsYaml`); the compiler
+merges both into one grant set. `rbac_view_grants.yaml` and `rbac_views.yaml` are optional (absent
+for base-only configs).
 
 ## Schema versioning
 
@@ -36,11 +38,12 @@ definitions are held in `common.schema.yaml`. File-to-schema mapping:
 
 | Generated file      | JSON Schema (YAML)     | Root type     |
 | :------------------ | :-------------------- | :------------ |
-| `base_grants.yaml`   | `grants.schema.yaml`   | `GrantsYaml`   |
-| `rbac_grants.yaml`   | `grants.schema.yaml`   | `GrantsYaml`   |
-| `labels.yaml`        | `labels.schema.yaml`   | `LabelsYaml`   |
-| `policies.yaml`      | `policies.schema.yaml` | `PoliciesYaml` |
-| `tags.yaml`          | `tags.schema.yaml`     | `TagsYaml`     |
+| `base_grants.yaml`      | `grants.schema.yaml`   | `GrantsYaml`   |
+| `rbac_view_grants.yaml` | `grants.schema.yaml`   | `GrantsYaml`   |
+| `rbac_views.yaml`       | `views.schema.yaml`    | `ViewsYaml`    |
+| `labels.yaml`           | `labels.schema.yaml`   | `LabelsYaml`   |
+| `policies.yaml`         | `policies.schema.yaml` | `PoliciesYaml` |
+| `tags.yaml`             | `tags.schema.yaml`     | `TagsYaml`     |
 
 ## Type model (concrete v1.0 structure)
 

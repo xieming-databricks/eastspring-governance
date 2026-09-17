@@ -75,11 +75,19 @@ def test_base_grant_rule_shape():
 # ---- Rbac Views -> serving-schema grants --------------------------------
 
 def test_rbac_views_emit_serving_schema_grants():
-    serving = generate_config(_wb())["rbac_grants"]["grant_rules"]
+    serving = generate_config(_wb())["rbac_view_grants"]["grant_rules"]
     assert len(serving) == 1
     r = serving[0]
     assert r["rule_id"] == "RBAC1" and r["groups"] == ["g_read"] and r["bundle"] == "READ"
     assert r["include"] == [{"type": "schema", "name": "c.dm_x"}]
+
+
+def test_views_built_from_base_tables():
+    views = generate_config(_wb())["rbac_views"]["views"]
+    by_view = {v["view"]: v for v in views}
+    assert set(by_view) == {"c.dm_x.t1", "c.dm_x.t2"}
+    assert by_view["c.dm_x.t1"] == {"view": "c.dm_x.t1", "source": "c.s.t1", "rls_column": "portfolio_code"}
+    assert by_view["c.dm_x.t2"] == {"view": "c.dm_x.t2", "source": "c.s.t2"}   # no rls_column -> no RLS
 
 
 def test_exceptions_carry_exp_id():
@@ -111,6 +119,9 @@ def test_output_validates_and_compiles():
     pytest.param(lambda w: w["Rbac Views"][0].__setitem__("group_name", "ghost"), id="unknown_rbac_group"),
     pytest.param(lambda w: w["Rbac Views"][0].__setitem__("bundle", "SUPERUSER"), id="rbac_bad_bundle"),
     pytest.param(lambda w: w["Rbac Views"][0].pop("schema"), id="rbac_missing_schema"),
+    pytest.param(lambda w: w["Base Tables"].append(
+        {"catalog": "c", "schema": "s2", "object": "t1", "object_type": "table",
+         "data_product": "dp_a", "target_schema": "c.dm_x"}), id="duplicate_view_target"),
 ])
 def test_referential_violations_raise(mutate):
     wb = _wb()
@@ -129,8 +140,14 @@ def test_real_v3_workbook_generates_valid_config():
     assert compile_config(docs).ok
 
     base = docs["base_grants"]["grant_rules"]
-    serving = docs["rbac_grants"]["grant_rules"]
+    serving = docs["rbac_view_grants"]["grant_rules"]
     assert len(docs["labels"]["labels"]) == 10       # 11 Base Tables rows, dup securable merged -> 10
     assert len(base) == 7                            # Base Grant Rules: admin x 7 data products
     assert len(serving) == 5                         # Rbac Views: 5 groups on the serving schema
     assert all(s["include"][0] == {"type": "schema", "name": "hera-dev.dm_esg"} for s in serving)
+
+    views = docs["rbac_views"]["views"]                   # one per Base Tables row with a target_schema
+    assert len(views) == 11                          # 10 -> hera-dev.dm_esg + 1 -> hera-dev.dm_something
+    assert "hera-dev.dm_something.fact_portfolio_position" in {v["view"] for v in views}
+    rls = {v["view"] for v in views if v.get("rls_column")}
+    assert "hera-dev.dm_esg.fact_portfolio_position" in rls   # rls_column carried through

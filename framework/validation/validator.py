@@ -75,7 +75,8 @@ _FILE_SCHEMA = {
 
 # Validated only if present (absence is not an error), unlike the required files above.
 _OPTIONAL_FILE_SCHEMA = {
-    "rbac_grants.yaml": "grants.schema.yaml",   # serving-schema (view) grants; absent for base-only configs
+    "rbac_view_grants.yaml": "grants.schema.yaml",   # serving-schema (view) grants; absent for base-only configs
+    "rbac_views.yaml": "views.schema.yaml",          # expected dynamic views (for reconcile detection)
     "governance.yaml": "governance.schema.yaml",
 }
 
@@ -142,6 +143,26 @@ def _check_labels(doc: Any) -> list[Issue]:
     return issues
 
 
+def _check_views(doc: Any) -> list[Issue]:
+    """views.yaml: a view fqn may be produced only once."""
+    issues: list[Issue] = []
+    if not isinstance(doc, dict):
+        return issues
+    seen: dict[str, int] = {}
+    for i, entry in enumerate(_as_list(doc.get("views"))):
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("view")
+        if not isinstance(key, str):
+            continue
+        if key in seen:
+            issues.append(Issue("rbac_views.yaml", f"views/{i}/view",
+                                f"view {key} defined more than once (first at views/{seen[key]})", "semantic"))
+        else:
+            seen[key] = i
+    return issues
+
+
 def _check_policies(doc: Any) -> list[Issue]:
     """policies.yaml: row-filter column aliases must be unique within a policy."""
     issues: list[Issue] = []
@@ -160,7 +181,8 @@ def _check_policies(doc: Any) -> list[Issue]:
 
 _FILE_SEMANTIC = {
     "base_grants.yaml": _check_grants,
-    "rbac_grants.yaml": _check_grants,
+    "rbac_view_grants.yaml": _check_grants,
+    "rbac_views.yaml": _check_views,
     "labels.yaml": _check_labels,
     "policies.yaml": _check_policies,
     "tags.yaml": _check_tags,
@@ -250,9 +272,9 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None) -
 
 
 # Short keys the Databricks Job passes as JSON dict params.
-_SHORT_TO_FILE = {"base_grants": "base_grants.yaml", "rbac_grants": "rbac_grants.yaml",
-                  "policies": "policies.yaml", "tags": "tags.yaml", "labels": "labels.yaml",
-                  "governance": "governance.yaml"}
+_SHORT_TO_FILE = {"base_grants": "base_grants.yaml", "rbac_view_grants": "rbac_view_grants.yaml",
+                  "rbac_views": "rbac_views.yaml", "policies": "policies.yaml", "tags": "tags.yaml",
+                  "labels": "labels.yaml", "governance": "governance.yaml"}
 
 
 def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None) -> ValidationResult:

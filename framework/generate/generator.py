@@ -72,11 +72,15 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
     for dup in sorted({x for x in _rids if _rids.count(x) > 1}):
         problems.append(f"'{T_GRANT_RULES}' tab: duplicate rule_id {dup!r}")
 
-    # ---- labels.yaml from the Tables tab (merge by securable) ------------
+    # ---- labels.yaml + views.yaml from the Base Tables tab ---------------
+    # labels: one per securable (merged). views: one per (base table -> target_schema)
+    # routing, so a base table feeding multiple serving schemas yields multiple views.
     labels_by_sec: dict[tuple[str, str], dict[str, str]] = {}
+    views: list[dict[str, Any]] = []
     for i, r in enumerate(wb.get(T_TABLES, [])):
         cat, sch, obj = r.get("catalog"), r.get("schema"), r.get("object")
         otype, dp = r.get("object_type"), r.get("data_product")
+        tsch, rcol = r.get("target_schema"), r.get("rls_column")
         if otype not in OBJECT_TYPES:
             problems.append(f"{T_TABLES} row {i}: object_type {otype!r} not one of {sorted(OBJECT_TYPES)}")
         if dp not in data_products:
@@ -85,10 +89,19 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
             problems.append(f"{T_TABLES} row {i}: missing catalog/schema/object")
             continue
         labels_by_sec.setdefault((otype, f"{cat}.{sch}.{obj}"), {})["data_product"] = dp
+        if tsch:                                     # base table -> dynamic view in the serving schema
+            v: dict[str, Any] = {"view": f"{tsch}.{obj}", "source": f"{cat}.{sch}.{obj}"}
+            if rcol:
+                v["rls_column"] = rcol
+            views.append(v)
     labels_entries = [
         {"securable": {"type": t, "name": n}, "labels": lb}
         for (t, n), lb in sorted(labels_by_sec.items(), key=lambda kv: (kv[0][1], kv[0][0]))
     ]
+    views.sort(key=lambda v: v["view"])
+    _vfqns = [v["view"] for v in views]
+    for dup in sorted({x for x in _vfqns if _vfqns.count(x) > 1}):
+        problems.append(f"'{T_TABLES}' tab: duplicate view target {dup!r} (same target_schema + object)")
 
     # ---- Grant Exceptions indexed by rule_id -> include / exclude --------
     exc_by_rule: dict[str, dict[str, list[dict]]] = {}
@@ -143,7 +156,7 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
             rule["exclude"] = exc["exclude"]
         grant_rules.append(rule)
 
-    # ---- rbac_grants.yaml from the Rbac Views tab (serving-schema grants) -
+    # ---- rbac_view_grants.yaml from the Rbac Views tab (serving-schema grants) -
     # End-user groups get their bundle on the serving SCHEMA (schema-grain include).
     # The views inside that schema are produced by view generation (not implemented here);
     # the schema itself is provisioned by Terraform.
@@ -177,7 +190,8 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
 
     docs: Docs = {
         "base_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": grant_rules},
-        "rbac_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": rbac_rules},
+        "rbac_view_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": rbac_rules},
+        "rbac_views": {"schema_version": SCHEMA_VERSION, "views": views},  # expected dynamic views
         "labels": {"schema_version": SCHEMA_VERSION, "labels": labels_entries},
         "tags": {"schema_version": SCHEMA_VERSION, "tags": []},          # asset-level scope: empty stub
         "policies": {"schema_version": SCHEMA_VERSION},                  # asset-level scope: empty stub
@@ -192,8 +206,9 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
 
 
 # File name per docs short-key, in a stable write order.
-_FILES = (("base_grants", "base_grants.yaml"), ("rbac_grants", "rbac_grants.yaml"),
-          ("labels", "labels.yaml"), ("tags", "tags.yaml"), ("policies", "policies.yaml"))
+_FILES = (("base_grants", "base_grants.yaml"), ("rbac_view_grants", "rbac_view_grants.yaml"),
+          ("rbac_views", "rbac_views.yaml"), ("labels", "labels.yaml"),
+          ("tags", "tags.yaml"), ("policies", "policies.yaml"))
 
 
 def write_config(docs: Docs, out_dir: str | Path) -> Path:
