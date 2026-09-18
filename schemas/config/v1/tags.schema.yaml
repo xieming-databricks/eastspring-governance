@@ -15,7 +15,7 @@ properties:
       $ref: '#/$defs/TagAssignment'
 $defs:
   TagAssignment:
-    $comment: Column-routing tags only (acm_pii_type / acm_rls) on COLUMN securables. Asset selection for grants lives in labels.yaml (labels, never materialized). 'a securable appears at most once in tags.yaml' is a cross-item rule enforced in the semantic layer.
+    $comment: Column-routing tags only (acm_pii_type) on COLUMN securables. Asset selection for grants lives in labels.yaml (labels, never materialized). 'a securable appears at most once in tags.yaml' is a cross-item rule enforced in the semantic layer.
     type: object
     additionalProperties: false
     required:
@@ -40,6 +40,5 @@ $defs:
         additionalProperties: false
         properties:
           acm_pii_type:
-            $ref: common.schema.yaml#/$defs/AcmPiiType
-          acm_rls:
-            $ref: common.schema.yaml#/$defs/AcmRlsDimension
+            $comment: Free non-empty string; the approved value vocabulary is validated (fail-open) against the reference allow-list's governed_tags, not by a closed enum here.
+            $ref: common.schema.yaml#/$defs/NonEmptyString

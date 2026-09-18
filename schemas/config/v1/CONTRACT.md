@@ -54,7 +54,6 @@ duplicate values. All records are closed: fields not shown are invalid.
 SchemaVersion = "1.0"
 NonEmptyString = string containing at least one non-whitespace character
 NamePart = NonEmptyString containing no "."
-Identifier = string matching [A-Za-z_][A-Za-z0-9_]*
 
 CatalogName = NamePart
 SchemaName = NamePart "." NamePart
@@ -62,7 +61,7 @@ ObjectName = NamePart "." NamePart "." NamePart
 ColumnName = NamePart "." NamePart "." NamePart "." NamePart
 FunctionName = ObjectName
 FrameworkManagedFunctionName = FunctionName whose final name starts with "acm_"
-FrameworkGeneratedPolicyName = Identifier starting with "acm_policy_"
+FrameworkGeneratedPolicyName = compiler-generated name matching acm_policy_[A-Za-z0-9_]*
 PolicyScope = CatalogName | SchemaName | ObjectName backed by a table
 ObjectRef = {type: ObjectType, name: qualified name for type}
 SecurableRef = {type: SecurableType, name: qualified name for type}
@@ -72,13 +71,9 @@ ObjectType = "catalog" | "schema" | "table" | "view" | "function" | "volume"
 SecurableType = ObjectType | "column"
 Bundle = "READ" | "WRITE" | "OWNER" | "ADMIN"
 
-FrameworkManagedTagKey = closed enum of MATERIALIZED tag keys (acm_pii_type, acm_rls); every member starts with "acm_"
-AllowedTagValues<K> = closed key-dependent string enum for a tag/label key K
-BusinessFunction = business-function vocabulary (investments | performance_attribution | compliance | quants)
+FrameworkManagedTagKey = closed enum of MATERIALIZED tag keys (acm_pii_type); every member starts with "acm_"
 LabelMap = {business_function?: NonEmptyString, data_product?: NonEmptyString}[1..*]   # config-only asset labels; values are free strings; NEVER materialized to UC
-AssetTagMap = {acm_business_function: BusinessFunction}     # ABAC policy table-matching only (policies.yaml)
-AcmPiiType = AllowedTagValues<"acm_pii_type">
-AcmRlsDimension = AllowedTagValues<"acm_rls">
+AssetTagMap = {acm_business_function: NonEmptyString}     # ABAC policy table-matching only (policies.yaml); free string, not a closed enum
 
 GrantMatch = {
   object_types: UniqueList<ObjectType>[1..*],
@@ -101,25 +96,15 @@ LabelAssignment = {
 }
 TagAssignment = {
   securable: {type: "column", name: ColumnName},    # column securables only
-  tags: {acm_pii_type?: AcmPiiType, acm_rls?: AcmRlsDimension}[1..*]
+  tags: {acm_pii_type: NonEmptyString}[1..*]   # value vocabulary validated (fail-open) against the reference allow-list, not a closed enum
 }
 
 ColumnMaskPolicy = {
   scope: PolicyScope,
   table_matching_tags?: AssetTagMap,
-  column_matching_tags: {acm_pii_type: AcmPiiType},
+  column_matching_tags: {acm_pii_type: NonEmptyString},
   function: FrameworkManagedFunctionName
 }
-RlsColumnMatch = {
-  condition: {acm_rls: AcmRlsDimension},
-  as: Identifier
-}
-RowFilterPolicy = {
-  scope: PolicyScope,
-  table_matching_tags?: AssetTagMap,
-  column_matching_tags: List<RlsColumnMatch>[1..3],
-  function: FrameworkManagedFunctionName
-} where column aliases are unique within the policy
 
 GrantsYaml = {
   schema_version: SchemaVersion,
@@ -127,8 +112,7 @@ GrantsYaml = {
 }
 PoliciesYaml = {
   schema_version: SchemaVersion,
-  column_mask_policies: List<ColumnMaskPolicy>[0..*],
-  row_filter_policies: List<RowFilterPolicy>[0..*]
+  column_mask_policies: List<ColumnMaskPolicy>[0..*]
 }
 LabelsYaml = {
   schema_version: SchemaVersion,
@@ -149,10 +133,12 @@ TagsYaml = {
   `data_product`) used only to *select* securables for grant rules; label values are
   free-form non-empty strings (the approved set is enforced at generation time, not by a
   closed enum). Labels are config-only and are **never written to Unity Catalog**.
-  `tags.yaml` holds the column-routing *tags* (`acm_pii_type`, `acm_rls`) that **are**
-  materialized to UC for ABAC masking / RLS. `acm_business_function` survives only as the
-  ABAC policy table-matching key (`AssetTagMap`, still a closed enum); policies are
-  detect-only in v1.
+  `tags.yaml` holds the column-routing *tags* (`acm_pii_type`) that **are** materialized to
+  UC for ABAC masking. `acm_business_function` survives only as the ABAC policy
+  table-matching key (`AssetTagMap`, a free non-empty string — not a closed enum); policies
+  are detect-only in v1.
+  Row-level security is view-based (dynamic-view `rls_column`), not a materialized tag /
+  row-filter policy.
 - For `ObjectRef` and `SecurableRef`, catalogs use `CatalogName`, schemas use `SchemaName`,
   columns use `ColumnName`, and all other types use `ObjectName`.
 - Tags outside the `acm_` namespace are not selected, assigned, or removed by this framework.
