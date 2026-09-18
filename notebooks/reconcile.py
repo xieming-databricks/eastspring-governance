@@ -7,23 +7,30 @@
 # MAGIC (`change_type` = ADD / REMOVE / CHANGE) + a **warning list**, and — in the apply
 # MAGIC stage — executes the grant/tag delta as GRANT / REVOKE / ALTER…SET/UNSET TAGS.
 # MAGIC
-# MAGIC **v1 full-sync scope:** the **`target_catalog`** parameter is treated as
-# MAGIC framework-owned — every live grant in it that the YAML does not declare is a
-# MAGIC **REMOVE**, except grants to a **protected principal** (the deploying identity +
-# MAGIC configured `admin_groups`) or in a **protected schema** (`information_schema` +
-# MAGIC configured extras). Tags/policies stay `acm_`-namespaced. Anything outside the
-# MAGIC target catalog is ignored.
+# MAGIC **v1 full-sync scope:** the **`target_catalog`** is treated as framework-owned —
+# MAGIC every live grant in it that the YAML does not declare is a **REMOVE**, except grants
+# MAGIC to a **protected principal** (the deploying identity + `admin_groups`) or in a
+# MAGIC **protected schema** (`information_schema` + extras). Tags/policies stay
+# MAGIC `acm_`-namespaced. Anything outside the target catalog is ignored.
 # MAGIC
-# MAGIC **`config_path`:** workspace path holding `grants.yaml` / `tags.yaml` /
-# MAGIC `policies.yaml` and an optional `governance.yaml`.
+# MAGIC **`config_path`:** workspace path holding `base_grants.yaml` / `labels.yaml` /
+# MAGIC `tags.yaml` / `policies.yaml` (+ optional `rbac_view_grants.yaml`, `rbac_views.yaml`).
+# MAGIC
+# MAGIC **Reference allow-list** (`../reference/<config_dir_name>.yaml`, sibling of the config
+# MAGIC dir): hand-curated per-deployment source of truth for the **`target_catalog`**, the
+# MAGIC **protected set** (`protected_principals` = `deployers` + `admin_groups`, plus
+# MAGIC `protected_schemas`), and the approved vocabulary (groups / schemas / governed_tags)
+# MAGIC that off-list use warns against.
 # MAGIC
 # MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
 # MAGIC executes the grant + tag statements. Policies are always **detect-only**.
 
 # COMMAND ----------
 
-dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/uat")
-dbutils.widgets.text("target_catalog", "asset_prod")
+dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
+# Leave target_catalog blank to use the reference allow-list's `target_catalog` (the source of
+# truth); set it only to override the reference for an ad-hoc run.
+dbutils.widgets.text("target_catalog", "", "target catalog (optional override of reference allow-list)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
 import sys
@@ -47,7 +54,7 @@ def show(df):
 
 # COMMAND ----------
 
-# DBTITLE 1,Load config from the workspace path (governance.yaml optional)
+# DBTITLE 1,Load config from the workspace path (+ reference allow-list)
 from pathlib import Path
 import yaml
 
@@ -58,26 +65,42 @@ docs = {
     k: yaml.safe_load((config_path / f"{k}.yaml").read_text())
     for k in ("base_grants", "labels", "tags", "policies")
 }
-# rbac_grants.yaml (serving-schema/view grants) and governance.yaml are optional; load if present.
-for opt in ("rbac_grants", "governance"):
+# rbac_view_grants.yaml (serving-schema grants) and rbac_views.yaml (expected dynamic views)
+# are optional; load if present.
+for opt in ("rbac_view_grants", "rbac_views"):
     opt_path = config_path / f"{opt}.yaml"
     if opt_path.exists():
         docs[opt] = yaml.safe_load(opt_path.read_text())
+
+# Reference allow-list: authoritative, hand-curated per-deployment vocabulary + the target
+# catalog + full-sync protected set. Lives at ../reference/<config_dir_name>.yaml (sibling of
+# the config dir), NOT generated from the workbook. Optional: absent -> warning layer skipped
+# and target_catalog must come from the widget.
+reference_path = config_path.parent / "reference" / f"{config_path.name}.yaml"
+reference = {}
+if reference_path.exists():
+    reference = yaml.safe_load(reference_path.read_text()) or {}
 print(f"[reconcile] config_source={config_path} | "
-      f"rbac_grants={'yes' if 'rbac_grants' in docs else 'no'} | "
-      f"governance={'yes' if 'governance' in docs else 'no'}")
+      f"rbac_view_grants={'yes' if 'rbac_view_grants' in docs else 'no'} | "
+      f"rbac_views={'yes' if 'rbac_views' in docs else 'no'} | "
+      f"reference={'yes' if reference else 'no'} ({reference_path.name})")
 
 # COMMAND ----------
 
-# DBTITLE 1,Validate the config (fail-closed)
+# DBTITLE 1,Validate the config (fail-closed errors; fail-open reference warnings)
 from framework.validation import validate_docs
 
-vres = validate_docs(docs)
+# Passing the reference adds fail-open warnings for any group / catalog.schema / tag key+value
+# the config uses but the allow-list does not list. Warnings are reported, never block.
+vres = validate_docs(docs, reference=reference or None)
+for issue in vres.sorted_issues():
+    print(f"  {issue}")
 if not vres.ok:
-    for issue in vres.sorted_issues():
-        print(f"  {issue}")
-    raise ValueError(f"config invalid: {len(vres.issues)} issue(s) — fix before reconciling")
-print("[reconcile] config valid")
+    raise ValueError(f"config invalid: {len(vres.errors)} error(s) — fix before reconciling")
+if vres.warnings:
+    print(f"[reconcile] config valid — {len(vres.warnings)} reference warning(s) (not blocking)")
+else:
+    print("[reconcile] config valid — no reference warnings")
 
 # COMMAND ----------
 
@@ -98,9 +121,12 @@ print(f"[reconcile] target: {len(state.grants)} grants | {len(state.tags)} tags 
 # DBTITLE 1,Target catalog + target-state DataFrames
 from framework.reconcile import frames, scope
 
-target_catalog = dbutils.widgets.get("target_catalog").strip()
+# Target catalog: reference allow-list is the source of truth; a non-empty widget overrides it
+# for ad-hoc runs.
+target_catalog = dbutils.widgets.get("target_catalog").strip() or (reference.get("target_catalog") or "").strip()
 if not target_catalog:
-    raise ValueError("`target_catalog` widget is required")
+    raise ValueError("no target_catalog: set the widget or `target_catalog` in the reference allow-list")
+print(f"[reconcile] target_catalog source={'widget' if dbutils.widgets.get('target_catalog').strip() else 'reference'}")
 catalogs = [target_catalog]
 
 # Anything outside the target catalog is ignored by the diff — surface how much.
@@ -135,13 +161,16 @@ print(f"[reconcile] live objects for preflight: {len(existing)}")
 # COMMAND ----------
 
 # DBTITLE 1,Protected set (full-sync guardrail — never proposed for REMOVE)
+# The reference allow-list is the sole home of the protected set: principals (deployers +
+# admin_groups) nested under `protected_principals`, and `protected_schemas` top-level.
 deployer = spark.sql("SELECT current_user()").collect()[0][0]  # noqa: F821
-gov = docs.get("governance") or {}
+ref_pp = reference.get("protected_principals") or {}
+
 protected_principals = scope.protected_principals(
     deployer=deployer,
-    deployers=gov.get("deployers"),
-    admin_groups=gov.get("admin_groups"))
-protected_schemas = scope.protected_schemas(extra=gov.get("protected_schemas"))
+    deployers=ref_pp.get("deployers"),
+    admin_groups=ref_pp.get("admin_groups"))
+protected_schemas = scope.protected_schemas(extra=reference.get("protected_schemas"))
 print(f"[reconcile] deployer={deployer}")
 print(f"[reconcile] protected principals={sorted(protected_principals)}")
 print(f"[reconcile] protected schemas={sorted(protected_schemas)}")
@@ -171,6 +200,44 @@ warnings = preflight.check_existence(state.refs, existing)
 warn_df = frames.warnings_frame(spark, warnings)  # noqa: F821
 print(f"=== warnings: {len(warnings)} ===")
 show(warn_df)
+
+# COMMAND ----------
+
+# DBTITLE 1,View preflight — serving schemas + views to create (detection only)
+# views.yaml lists the dynamic views the matrix expects (base table -> serving schema). This
+# DETECTS, without creating anything: serving schemas that are missing (provisioned by
+# Terraform), views that must be created, and live views in the serving schemas that are NOT
+# in the matrix (candidate deletes -> flagged as a warning).
+expected_views = sorted({v["view"] for v in (docs.get("rbac_views") or {}).get("views", [])})
+serving_schemas = sorted({".".join(v.split(".")[:2]) for v in expected_views})
+
+existing_schemas, live_views = set(), set()
+for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
+    try:
+        for r in spark.sql(f"SELECT schema_name FROM `{_cat}`.information_schema.schemata").collect():  # noqa: F821
+            existing_schemas.add(f"{_cat}.{r['schema_name']}")
+        for r in spark.sql(f"SELECT table_schema, table_name FROM `{_cat}`.information_schema.views").collect():  # noqa: F821
+            live_views.add(f"{_cat}.{r['table_schema']}.{r['table_name']}")
+    except Exception as exc:  # missing catalog / no access — report and continue
+        print(f"[views] could not read information_schema in {_cat}: {exc}")
+
+serving_live = {v for v in live_views if ".".join(v.split(".")[:2]) in serving_schemas}
+missing_schemas = [s for s in serving_schemas if s not in existing_schemas]
+views_to_create = sorted(set(expected_views) - live_views)
+views_to_drop = sorted(serving_live - set(expected_views))
+
+print(f"[views] serving schemas expected: {serving_schemas}")
+print(f"[views] MISSING serving schemas (provision via Terraform): {missing_schemas or 'none'}")
+print(f"[views] views to CREATE ({len(views_to_create)}): {views_to_create}")
+if views_to_drop:
+    print(f"[views] WARNING — live views not in the matrix ({len(views_to_drop)}): {views_to_drop}")
+
+_view_rows = ([(v, "CREATE" if v in set(views_to_create) else "OK") for v in expected_views]
+              + [(v, "DELETE?") for v in views_to_drop])
+if _view_rows:
+    show(spark.createDataFrame(_view_rows, ["view", "action"]))  # noqa: F821
+else:
+    print("[views] no views expected (base-only config)")
 
 # COMMAND ----------
 

@@ -37,7 +37,7 @@ class TargetPolicy:
     """
     scope: str              # catalog | schema | table fqn the policy is ON
     policy_name: str        # acm_policy_*
-    policy_type: str        # "column_mask" | "row_filter"
+    policy_type: str        # "column_mask" (row filters retired; RLS is view-based)
     function: str           # fully-qualified function (the mutable "value")
     match_signature: str = field(compare=False)   # human-readable match detail
 

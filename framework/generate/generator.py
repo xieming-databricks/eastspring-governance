@@ -8,8 +8,9 @@ so it is unit-testable with plain dicts.
 
 v3 dynamic-views layout: ``labels.yaml`` from Base Tables (object selection); ``grants.yaml`` from
 Base Grant Rules (base-table grants — e.g. admin/owner) + Rbac Views (end-user grants on the serving
-SCHEMA). ``tags.yaml`` / ``policies.yaml`` are valid empty stubs. Base Tables' ``target_schema`` /
-``rls_column`` (view destination + RLS column) are inputs to view generation and are NOT consumed here yet.
+SCHEMA). ``tags.yaml`` from Asset Classification (column pii tags); ``policies.yaml`` column masks
+from Masking Rules (``when_key``/``when_value`` table-narrowing dropped for now); ``rbac_views.yaml``
+(expected dynamic views) from Base Tables' ``target_schema`` / ``rls_column``.
 The workbook's ``data_product`` values are free strings in the schema, so their approved set is
 enforced HERE (against the Data Products tab) — that was the deal when we chose open-string
 labels. Any referential problem raises :class:`GeneratorError` listing every problem; nothing
@@ -38,8 +39,11 @@ T_GRANT_RULES = "Base Grant Rules"
 T_GRANT_EXCEPTIONS = "Base Grant Exceptions"
 T_PERMISSION_BUNDLES = "Permission Bundles"
 T_RBAC_VIEWS = "Rbac Views"
+T_ASSET_CLASSIFICATION = "Asset Classification"
+T_MASKING_RULES = "Masking Rules"
 REQUIRED_SHEETS = (T_GROUPS, T_DATA_PRODUCTS, T_TABLES, T_GRANT_RULES,
-                   T_GRANT_EXCEPTIONS, T_PERMISSION_BUNDLES, T_RBAC_VIEWS)
+                   T_GRANT_EXCEPTIONS, T_PERMISSION_BUNDLES, T_RBAC_VIEWS,
+                   T_ASSET_CLASSIFICATION, T_MASKING_RULES)
 
 Docs = dict[str, dict[str, Any]]
 
@@ -184,17 +188,62 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
         vrule["include"] = [{"type": "schema", "name": f"{cat}.{sch}"}]
         rbac_rules.append(vrule)
 
+    # ---- tags.yaml from the Asset Classification tab (column tags) --------
+    # Materialized column tags. The workbook's tag_key is already acm_-namespaced (e.g.
+    # acm_pii_type) and is used verbatim — no key translation. WHICH acm_ keys are legal is a
+    # closed set owned by tags.schema.yaml and enforced by the self-check below, so the generator
+    # keeps no separate tag-key list. Merged per column securable.
+    tags_by_col: dict[str, dict[str, str]] = {}
+    for i, r in enumerate(wb.get(T_ASSET_CLASSIFICATION, [])):
+        obj, tkey, tval = r.get("object"), r.get("tag_key"), r.get("tag_value")
+        if not obj:
+            problems.append(f"{T_ASSET_CLASSIFICATION} row {i}: missing object")
+            continue
+        if not tkey:
+            problems.append(f"{T_ASSET_CLASSIFICATION} row {i}: missing tag_key")
+            continue
+        tags_by_col.setdefault(obj, {})[tkey] = tval
+    tag_entries = [
+        {"securable": {"type": "column", "name": col}, "tags": tg}
+        for col, tg in sorted(tags_by_col.items())
+    ]
+
+    # ---- policies.yaml from the Masking Rules tab (column masks) ----------
+    # when_key/when_value (table narrowing) are intentionally ignored for now: the mask is
+    # scoped to `attach` and applies to columns tagged acm_pii_type=<value> under that scope.
+    column_mask_policies: list[dict[str, Any]] = []
+    for i, r in enumerate(wb.get(T_MASKING_RULES, [])):
+        scope = r.get("attach")
+        mck, mcv, fn = r.get("match_columns_key"), r.get("match_columns_value"), r.get("function")
+        if mck != "acm_pii_type":
+            problems.append(f"{T_MASKING_RULES} row {i}: match_columns_key {mck!r} must be 'acm_pii_type'")
+        if not scope:
+            problems.append(f"{T_MASKING_RULES} row {i}: missing attach (scope)")
+        if not fn:
+            problems.append(f"{T_MASKING_RULES} row {i}: missing function")
+        if not (scope and fn and mck == "acm_pii_type"):
+            continue
+        column_mask_policies.append({
+            "scope": scope,
+            "column_matching_tags": {"acm_pii_type": mcv},
+            "function": fn,
+        })
+
     if problems:
         raise GeneratorError(
             "workbook cannot be converted to a valid config:\n  - " + "\n  - ".join(problems))
+
+    policies_doc: dict[str, Any] = {"schema_version": SCHEMA_VERSION}
+    if column_mask_policies:
+        policies_doc["column_mask_policies"] = column_mask_policies
 
     docs: Docs = {
         "base_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": grant_rules},
         "rbac_view_grants": {"schema_version": SCHEMA_VERSION, "grant_rules": rbac_rules},
         "rbac_views": {"schema_version": SCHEMA_VERSION, "views": views},  # expected dynamic views
         "labels": {"schema_version": SCHEMA_VERSION, "labels": labels_entries},
-        "tags": {"schema_version": SCHEMA_VERSION, "tags": []},          # asset-level scope: empty stub
-        "policies": {"schema_version": SCHEMA_VERSION},                  # asset-level scope: empty stub
+        "tags": {"schema_version": SCHEMA_VERSION, "tags": tag_entries},  # from Asset Classification
+        "policies": policies_doc,                                        # column masks from Masking Rules
     }
 
     # Self-check: never emit YAML the framework's own validator would reject.

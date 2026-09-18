@@ -18,8 +18,8 @@ WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v3-dy
 
 
 def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=None,
-        grant_rules=None, exceptions=None, rbac_views=None,
-        bundles=("READ", "WRITE", "OWNER", "ADMIN")):
+        grant_rules=None, exceptions=None, rbac_views=None, asset_classification=None,
+        masking_rules=None, bundles=("READ", "WRITE", "OWNER", "ADMIN")):
     """Build a minimal, otherwise-valid v3 workbook (tab -> row-dicts)."""
     if tables is None:
         tables = [
@@ -41,6 +41,8 @@ def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=
         "Base Grant Rules": grant_rules,
         "Base Grant Exceptions": exceptions or [],
         "Rbac Views": rbac_views,
+        "Asset Classification": asset_classification or [],
+        "Masking Rules": masking_rules or [],
         "Permission Bundles": [{"bundle": b} for b in bundles],
     }
 
@@ -90,6 +92,30 @@ def test_views_built_from_base_tables():
     assert by_view["c.dm_x.t2"] == {"view": "c.dm_x.t2", "source": "c.s.t2"}   # no rls_column -> no RLS
 
 
+def test_tags_from_asset_classification():
+    # tag_key is already acm_-namespaced in the workbook and used verbatim (no key translation).
+    ac = [
+        {"object": "c.s.t1.name", "tag_key": "acm_pii_type", "tag_value": "FULL_NAME"},
+        {"object": "c.s.t1.email", "tag_key": "acm_pii_type", "tag_value": "EMAIL"},
+    ]
+    tags = generate_config(_wb(asset_classification=ac))["tags"]["tags"]
+    by = {t["securable"]["name"]: t for t in tags}
+    assert by["c.s.t1.name"] == {
+        "securable": {"type": "column", "name": "c.s.t1.name"}, "tags": {"acm_pii_type": "FULL_NAME"}}
+    assert by["c.s.t1.email"]["tags"] == {"acm_pii_type": "EMAIL"}
+
+
+def test_column_masks_from_masking_rules():
+    mr = [{"attach": "c.gold", "when_key": "data_product", "when_value": "x",
+           "match_columns_key": "acm_pii_type", "match_columns_value": "FULL_NAME",
+           "function": "c.gov.acm_mask_full_name"}]
+    pols = generate_config(_wb(masking_rules=mr))["policies"]["column_mask_policies"]
+    assert pols == [{"scope": "c.gold",
+                     "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
+                     "function": "c.gov.acm_mask_full_name"}]
+    assert "table_matching_tags" not in pols[0]      # when_key/when_value dropped
+
+
 def test_exceptions_carry_exp_id():
     exceptions = [
         {"exception_id": "EX1", "rule_id": "GR1", "action": "include", "object_type": "function", "object": "c.s.f"},
@@ -122,6 +148,14 @@ def test_output_validates_and_compiles():
     pytest.param(lambda w: w["Base Tables"].append(
         {"catalog": "c", "schema": "s2", "object": "t1", "object_type": "table",
          "data_product": "dp_a", "target_schema": "c.dm_x"}), id="duplicate_view_target"),
+    pytest.param(lambda w: w["Asset Classification"].append(
+        {"object": "c.s.t1.x", "tag_key": "not_a_tag", "tag_value": "v"}), id="bad_tag_key"),
+    pytest.param(lambda w: w["Asset Classification"].append(
+        {"object": "c.s.t1.p", "tag_key": "pii_type", "tag_value": "FULL_NAME"}),
+        id="short_tag_key_no_longer_mapped"),   # map ditched: bare 'pii_type' must be acm_-prefixed now
+    pytest.param(lambda w: w["Masking Rules"].append(
+        {"attach": "c.gold", "match_columns_key": "acm_bogus", "match_columns_value": "x",
+         "function": "c.gov.acm_x"}), id="mask_bad_match_key"),
 ])
 def test_referential_violations_raise(mutate):
     wb = _wb()
@@ -151,3 +185,13 @@ def test_real_v3_workbook_generates_valid_config():
     assert "hera-dev.dm_something.fact_portfolio_position" in {v["view"] for v in views}
     rls = {v["view"] for v in views if v.get("rls_column")}
     assert "hera-dev.dm_esg.fact_portfolio_position" in rls   # rls_column carried through
+
+    tags = docs["tags"]["tags"]                      # from Asset Classification (7 pii_type rows)
+    assert len(tags) == 7
+    assert all(t["securable"]["type"] == "column" for t in tags)
+    assert all(set(t["tags"]) <= {"acm_pii_type"} for t in tags)   # rls no longer materialized
+
+    masks = docs["policies"]["column_mask_policies"]  # from Masking Rules (4 rows)
+    assert len(masks) == 4
+    assert all(m["function"].split(".")[-1].startswith("acm_") for m in masks)
+    assert all("table_matching_tags" not in m for m in masks)   # when_key/value dropped

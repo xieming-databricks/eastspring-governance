@@ -11,7 +11,7 @@
 
 Grant object-matching uses the DESIRED labels in ``labels.yaml`` (config-only,
 deterministic) — never live tags. Tags in ``tags.yaml`` are column-routing tags
-(acm_pii_type / acm_rls) that DO get materialized.
+(acm_pii_type) that DO get materialized.
 """
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def compile_config(docs: dict[str, Any]) -> TargetState:
                     grant_set.add(TargetGrant(group, priv, sec_type, sec_fqn))
     state.grants = sorted(grant_set)
 
-    # --- policies: masks + row filters -----------------------------------
+    # --- policies: column masks ------------------------------------------
     for p in policies_doc.get("column_mask_policies", []):
         scope, fn = p["scope"], p["function"]
         tmt = p.get("table_matching_tags", {})
@@ -98,20 +98,6 @@ def compile_config(docs: dict[str, Any]) -> TargetState:
         sig = f"tmt={sorted(tmt.items())}|pii={pii}"
         name = policy_name("mask", scope, sig, descriptor=pii)
         state.policies.append(TargetPolicy(scope, name, "column_mask", fn, sig))
-        state.refs.append(RefObject("function", fn, "policy.function"))
-        state.refs.append(RefObject(_scope_type(scope), scope, "policy.scope"))
-
-    for p in policies_doc.get("row_filter_policies", []):
-        scope, fn = p["scope"], p["function"]
-        tmt = p.get("table_matching_tags", {})
-        cms = p["column_matching_tags"]
-        dims = [c["condition"]["acm_rls"] for c in cms]
-        sig = "tmt={}|rls={}".format(
-            sorted(tmt.items()),
-            ";".join(f"{c['condition']['acm_rls']}:{c['as']}" for c in cms),
-        )
-        name = policy_name("rls", scope, sig, descriptor="_".join(dims))
-        state.policies.append(TargetPolicy(scope, name, "row_filter", fn, sig))
         state.refs.append(RefObject("function", fn, "policy.function"))
         state.refs.append(RefObject(_scope_type(scope), scope, "policy.scope"))
 

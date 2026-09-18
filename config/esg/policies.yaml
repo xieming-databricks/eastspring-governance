@@ -1,0 +1,18 @@
+schema_version: '1.0'
+column_mask_policies:
+- scope: hera-dev.gold
+  column_matching_tags:
+    acm_pii_type: FULL_NAME
+  function: hera-dev.governance.acm_mask_full_name
+- scope: hera-dev.gold
+  column_matching_tags:
+    acm_pii_type: EMAIL
+  function: hera-dev.governance.acm_mask_email
+- scope: hera-dev.gold
+  column_matching_tags:
+    acm_pii_type: PASSPORT
+  function: hera-dev.governance.acm_mask_passport
+- scope: hera-dev.silver
+  column_matching_tags:
+    acm_pii_type: identifier
+  function: hera-dev.governance.acm_mask_identifier

@@ -174,12 +174,13 @@ def test_compile_error_surfaces_for_bad_bundle_object():
     assert not st.ok and st.errors
 
 
-# ---- compile the real config/dev ----------------------------------------
+# ---- compile the real config/esg ----------------------------------------
 
-def test_compile_config_dev():
-    d = REPO / "config" / "dev"
+def test_compile_config_esg():
+    d = REPO / "config" / "esg"
     docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
-            for k in ("base_grants", "tags", "policies", "labels")}
+            for k in ("base_grants", "rbac_view_grants", "rbac_views", "tags", "policies", "labels")
+            if (d / f"{k}.yaml").exists()}
     st = compile_config(docs)
     assert st.ok
     assert st.grants and st.tags and st.policies and st.refs

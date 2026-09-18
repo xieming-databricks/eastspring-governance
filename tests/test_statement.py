@@ -69,8 +69,8 @@ def test_tag_change_is_set():
 
 
 def test_tag_unset_table():
-    assert statement.tag_statement(_t("REMOVE", "table", "c.s.t", "acm_rls")) == (
-        "ALTER TABLE `c`.`s`.`t` UNSET TAGS ('acm_rls')")
+    assert statement.tag_statement(_t("REMOVE", "table", "c.s.t", "acm_pii_type")) == (
+        "ALTER TABLE `c`.`s`.`t` UNSET TAGS ('acm_pii_type')")
 
 
 def test_tag_set_column_splits_4part_fqn():

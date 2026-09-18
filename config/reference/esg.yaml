@@ -1,0 +1,61 @@
+schema_version: "1.0"
+# Reference allow-list (authoritative approved vocabulary) for this deployment (hera-dev / ESG).
+#
+# This is the single source of truth for the groups, schemas, data products, and governed tags
+# that the Access Matrix is allowed to use. Anything referenced by the workbook / generated config that is NOT
+# listed here should raise a validation WARNING (a soft, fail-open check — distinct from the hard,
+# fail-closed JSON-Schema validation). It is hand-curated by governance, not generated from the
+# workbook (the workbook is validated *against* it).
+
+# ---- target catalog: the single catalog this deployment is authoritative over ---
+# Full-sync makes this catalog framework-owned: any grant in it the config does not
+# declare becomes a REMOVE (minus the protected set below). The reconcile notebook
+# reads this instead of a hand-typed widget default.
+target_catalog: hera-dev
+
+# ---- protected set: full-sync guardrails (never REMOVE / never touch) ------------
+# deployers        account identities/groups that run the reconcile (protected even when
+#                  a human runs it interactively and current_user() would miss them).
+# admin_groups     account/metastore admin groups whose grants full-sync must never revoke.
+# protected_schemas extra schema names full-sync must never touch (on top of the built-in
+#                  information_schema).
+
+protected_principals: 
+  deployers: []
+  admin_groups: [account admins]
+
+protected_schemas: []
+
+# ---- groups: account-level groups the matrix may grant to --------------
+groups:
+  - hera-all-esg-read-unmasked
+  - hera-all-esg-read-masked
+  - hera-sg-esg-read-masked
+  - hera-sg-eq-read-masked
+  - hera-sg-fi-read-masked
+  - hera-all-admin-admin-unmasked
+
+# ---- schemas: base + serving schemas the matrix may reference ----------
+schemas:
+  - hera-dev.gold          # base
+  - hera-dev.silver        # base
+  - hera-dev.governance    # base (helper/UDF schema)
+  - hera-dev.dm_esg        # serving (dynamic views)
+  - hera-dev.dm_something  # serving (example of a second target schema)
+
+# ---- data products: approved data_product asset labels (grant selection) -----
+# The data_product values the matrix may attach as labels / match grant rules on. Off-list
+# values raise a fail-open warning.
+data_products:
+  - investment_esg
+  - investment_research
+  - market_data
+  - mdm_portfolio_structure
+  - mdm_security
+  - portfolio_position
+  - portfolio_transaction
+
+# ---- governed tags: approved acm_-namespaced tag key -> approved values ------
+# The keys are the approved tag-key set; each list is the approved values for that key.
+governed_tags:
+  acm_pii_type: [FULL_NAME, EMAIL, PASSPORT, identifier, secret]
