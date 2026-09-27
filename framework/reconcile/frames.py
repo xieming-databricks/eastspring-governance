@@ -17,7 +17,7 @@ Row = dict[str, Any]
 
 GRANT_COLS = ["principal", "privilege_type", "securable_type", "securable_fqn"]
 TAG_COLS = ["securable_type", "securable_fqn", "tag_key", "tag_value"]
-POLICY_COLS = ["scope", "policy_name", "policy_type", "function"]
+POLICY_COLS = ["scope", "policy_name", "policy_type", "function", "except_principals"]
 WARN_COLS = ["kind", "object_type", "fqn", "origin", "reason"]
 
 
@@ -35,7 +35,8 @@ def tag_row(t: TargetTag) -> Row:
 
 def policy_row(p: TargetPolicy) -> Row:
     return {"scope": p.scope, "policy_name": p.policy_name,
-            "policy_type": p.policy_type, "function": p.function}
+            "policy_type": p.policy_type, "function": p.function,
+            "except_principals": p.except_principals}
 
 
 def _df(spark: SparkSession, rows: list[dict], columns: list[str]) -> DataFrame:

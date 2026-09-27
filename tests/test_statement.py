@@ -100,11 +100,70 @@ def test_principal_quoting_group_and_email():
         "TO `a@b.com`")
 
 
+# ---- ABAC column-mask policies ------------------------------------------
+
+def _pdef(scope="hera-dev.gold", name="acm_policy_mask_full_name__habc",
+          fn="hera-dev.governance.acm_mask_full_name", col_val="FULL_NAME",
+          tkey=None, tval=None, exempt=""):
+    return {"scope": scope, "policy_name": name, "function": fn,
+            "column_tag_key": "acm_pii_type", "column_tag_value": col_val,
+            "table_tag_key": tkey, "table_tag_value": tval, "except_principals": exempt}
+
+
+def _prow(change_type, scope="hera-dev.gold", name="acm_policy_mask_full_name__habc"):
+    return {"scope": scope, "policy_name": name, "change_type": change_type}
+
+
+def test_policy_create_or_replace_basic():
+    sql = statement.policy_statement(_prow("ADD"), _pdef())
+    assert sql.startswith("CREATE OR REPLACE POLICY acm_policy_mask_full_name__habc "
+                          "ON SCHEMA `hera-dev`.`gold`")
+    assert "COLUMN MASK `hera-dev`.`governance`.`acm_mask_full_name`" in sql
+    assert "TO `account users`" in sql
+    assert "FOR TABLES" in sql
+    assert "MATCH COLUMNS has_tag_value('acm_pii_type', 'FULL_NAME') AS c" in sql
+    assert sql.rstrip().endswith("ON COLUMN c")
+    assert "EXCEPT" not in sql            # no exempt principals -> no EXCEPT
+    assert "WHEN" not in sql              # no table_matching_tags -> no WHEN
+
+
+def test_policy_create_with_except_and_when():
+    sql = statement.policy_statement(
+        _prow("CHANGE"),
+        _pdef(exempt="hera-etl-ingest,sp-pipelines", tkey="acm_business_function", tval="investments"))
+    assert "EXCEPT `hera-etl-ingest`, `sp-pipelines`" in sql
+    assert "WHEN has_tag_value('acm_business_function', 'investments')" in sql
+
+
+def test_policy_change_uses_create_or_replace():
+    assert statement.policy_statement(_prow("CHANGE"), _pdef()).startswith("CREATE OR REPLACE POLICY")
+
+
+def test_policy_remove_is_drop():
+    sql = statement.policy_statement(_prow("REMOVE", scope="hera-dev.gold.t", name="acm_policy_z"), None)
+    assert sql == "DROP POLICY acm_policy_z ON TABLE `hera-dev`.`gold`.`t`"
+
+
+def test_policy_scope_keyword_by_depth():
+    assert " ON CATALOG " in statement.policy_statement(_prow("ADD", scope="cat"), _pdef(scope="cat"))
+    assert " ON SCHEMA " in statement.policy_statement(_prow("ADD", scope="cat.sch"), _pdef(scope="cat.sch"))
+    assert " ON TABLE " in statement.policy_statement(_prow("ADD", scope="cat.sch.t"), _pdef(scope="cat.sch.t"))
+
+
+def test_policy_add_without_def_raises():
+    with pytest.raises(statement.ApplyError):
+        statement.policy_statement(_prow("ADD"), None)
+
+
 # ---- dispatch / ordering ------------------------------------------------
 
-def test_policies_are_detect_only():
-    assert statement.statements_for("policies", [{"scope": "c.s", "policy_name": "acm_policy_x",
-                                                  "change_type": "ADD"}]) == []
+def test_statements_for_policies_looks_up_defs():
+    rows = [_prow("ADD"), _prow("REMOVE", name="acm_policy_gone")]
+    defs = {("hera-dev.gold", "acm_policy_mask_full_name__habc"): _pdef()}
+    out = statement.statements_for("policies", rows, policy_defs=defs)
+    sqls = {r["change_type"]: s for r, s in out}
+    assert sqls["ADD"].startswith("CREATE OR REPLACE POLICY")
+    assert sqls["REMOVE"].startswith("DROP POLICY acm_policy_gone")
 
 
 def test_statements_for_orders_add_before_remove():
@@ -116,15 +175,16 @@ def test_statements_for_orders_add_before_remove():
     assert cts == ["ADD", "REMOVE"]
 
 
-def test_plan_all_flattens_grants_then_tags_skips_policies():
+def test_plan_all_includes_policies():
     deltas = {
         "grants": [_g("ADD", "g", "SELECT", "table", "c.s.t")],
         "tags": [_t("ADD", "table", "c.s.t", "acm_x", "v")],
-        "policies": [{"scope": "c.s", "policy_name": "acm_policy_x", "change_type": "ADD"}],
+        "policies": [_prow("ADD")],
     }
-    planned = statement.plan_all(deltas)
+    defs = {("hera-dev.gold", "acm_policy_mask_full_name__habc"): _pdef()}
+    planned = statement.plan_all(deltas, policy_defs=defs)
     dims = [dim for dim, _row, _stmt in planned]
-    assert dims == ["grants", "tags"]                 # policies skipped, grants before tags
+    assert dims == ["grants", "tags", "policies"]     # grants, then tags, then policies
     assert all(isinstance(stmt, str) for _d, _r, stmt in planned)
 
 

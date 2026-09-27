@@ -114,7 +114,9 @@ def diff_policies(target: DataFrame, live: DataFrame, *, target_catalog: str | N
                protected_schemas=protected_schemas)
     l = _scope(live, fqn_col="scope", target_catalog=target_catalog,
                protected_schemas=protected_schemas, acm_col="policy_name", acm_prefix="acm_policy_")
-    return _diff(t, l, POLICY_KEYS, value_cols=["policy_type", "function"])
+    # CHANGE fires when the mask function OR the EXCEPT (ETL-exempt) list drifts. policy_type is
+    # not compared: it's always column_mask now, and live reads it from abac_policy_definitions.
+    return _diff(t, l, POLICY_KEYS, value_cols=["function", "except_principals"])
 
 
 def diff_all(target_frames: dict[str, DataFrame], live_frames: dict[str, DataFrame], *,

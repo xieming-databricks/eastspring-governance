@@ -1,19 +1,22 @@
 """Read live Unity Catalog state via Spark (runs in Databricks).
 
 Uses ``system.information_schema`` (cross-catalog, confirmed available on the test
-workspace) for grants/tags/objects, and ``SHOW POLICIES`` for ABAC policies (which
-are not exposed in information_schema). ``spark`` is the session the Job runs with.
+workspace) for grants/tags/objects, and — for ABAC column-mask policies — the
+``abac_policy_definitions`` information relation plus per-policy ``DESCRIBE POLICY`` (the
+relation gives the inventory + EXCEPT list but not the mask function). ``spark`` is the
+session the Job runs with.
 
 Grant/tag/policy readers return **Spark DataFrames** (never collected) so the Spark-SQL
 diff scales to a full catalog's grants. Columns match the target frames in ``frames.py``:
 grants ``(principal, privilege_type, securable_type, securable_fqn)``; tags
 ``(securable_type, securable_fqn, tag_key, tag_value)``; policies
-``(scope, policy_name, policy_type, function)``. ``read_existing_objects`` still returns a
-small driver-side set (referenced-object existence for preflight).
+``(scope, policy_name, policy_type, function, except_principals)``. ``read_existing_objects``
+still returns a small driver-side set (referenced-object existence for preflight).
 
-NOTE (verify during e2e): exact column names of routine_privileges (``specific_*``),
-the ``inherited_from`` sentinel value, and the ``SHOW POLICIES`` output columns are
-confirmed against the live workspace and adjusted if needed.
+NOTE (verify during e2e): exact column names of routine_privileges (``specific_*``), the
+``inherited_from`` sentinel value, and the ``abac_policy_definitions`` / ``DESCRIBE POLICY``
+columns (``abac_policy_definitions`` is Public Preview) are confirmed against the live
+workspace and adjusted if needed.
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ from pyspark.sql.types import StructType, StructField, StringType
 Row = dict[str, Any]
 _SYS = "system.information_schema"
 
-_POLICY_COLS = ["scope", "policy_name", "policy_type", "function"]
+_POLICY_COLS = ["scope", "policy_name", "policy_type", "function", "except_principals"]
 
 
 def _in_list(vals) -> str:
@@ -140,38 +143,63 @@ def read_existing_objects(spark: SparkSession, catalogs: list[str]) -> set[tuple
     return existing
 
 
-_SCOPE_KEYWORD = {"catalog": "CATALOG", "schema": "SCHEMA", "table": "TABLE"}
+def read_live_policies(spark: SparkSession, catalogs: list[str]) -> DataFrame:
+    """Live column-mask policies in ``catalogs``, read from the ABAC information relation
+    (inventory + EXCEPT list) plus a per-policy ``DESCRIBE POLICY`` for the mask function (the
+    relation doesn't expose function_name). Normalized to
+    (scope, policy_name, policy_type, function, except_principals) for the diff. Only
+    ``acm_policy_*`` COLUMN_MASK policies (the framework-managed set) are read.
 
+    ``abac_policy_definitions`` is Public Preview; if it (or DESCRIBE POLICY) is unavailable the
+    read yields empty and the diff simply proposes ADDs — verify availability during e2e."""
+    cats = _in_list(catalogs)
+    if not cats:
+        return _empty(spark, _POLICY_COLS)
+    scope_sql = ("CASE on_securable_type "
+                 "WHEN 'CATALOG' THEN catalog_name "
+                 "WHEN 'SCHEMA' THEN concat_ws('.', catalog_name, schema_name) "
+                 "ELSE concat_ws('.', catalog_name, schema_name, securable_name) END")
+    try:
+        inv = spark.sql(f"""
+            SELECT policy_name,
+                   on_securable_type,
+                   {scope_sql} AS scope,
+                   coalesce(array_join(array_sort(except_principals), ','), '') AS except_principals
+              FROM {_SYS}.abac_policy_definitions
+             WHERE policy_type = 'COLUMN_MASK'
+               AND policy_name LIKE 'acm_policy_%'
+               AND catalog_name IN ({cats})
+        """).collect()
+    except Exception:
+        return _empty(spark, _POLICY_COLS)   # preview relation not enabled -> treat as no live policies
 
-def read_live_policies(spark: SparkSession, scopes: list[tuple[str, str]]) -> DataFrame:
-    """Run SHOW POLICIES for each (scope_type, fqn), normalize to
-    (scope, policy_name, policy_type, function), and return a DataFrame. ``scopes`` is
-    de-duplicated. Policies are few, so this collects per scope then rebuilds a frame for
-    a uniform diff input.
-
-    SHOW POLICIES column names vary; we map defensively. Verify/adjust during e2e."""
     rows: list[tuple] = []
-    for scope_type, fqn in sorted(set(scopes)):
-        kw = _SCOPE_KEYWORD.get(scope_type)
-        if kw is None:
-            continue
-        try:
-            df = spark.sql(f"SHOW POLICIES ON {kw} {fqn}")
-        except Exception:
-            continue  # scope may not exist yet; preflight surfaces that separately
-        cols = {c.lower(): c for c in df.columns}
-        for r in df.collect():
-            d = r.asDict()
-            name = _pick(d, cols, ["policy_name", "name", "policyname"])
-            ptype = _norm_policy_type(_pick(d, cols, ["policy_type", "kind", "type"]))
-            func = _pick(d, cols, ["function", "function_name", "mask_function", "filter_function"])
-            if name is None:
-                continue
-            rows.append((fqn, name, ptype, func))
+    for r in inv:
+        fn = _describe_policy_function(spark, r["policy_name"], r["on_securable_type"], r["scope"])
+        rows.append((r["scope"], r["policy_name"], "column_mask", fn, r["except_principals"]))
     if not rows:
         return _empty(spark, _POLICY_COLS)
     schema = StructType([StructField(c, StringType(), True) for c in _POLICY_COLS])
     return spark.createDataFrame(rows, schema)
+
+
+def _bt(fqn: str) -> str:
+    """Backtick each dotted segment (scope fqns can contain hyphens, e.g. hera-dev)."""
+    return ".".join(f"`{seg}`" for seg in fqn.split("."))
+
+
+def _describe_policy_function(spark: SparkSession, name: str, scope_kw: str, scope: str) -> str | None:
+    """Mask function fqn from DESCRIBE POLICY (info_name='Function Name'); None if unavailable."""
+    try:
+        df = spark.sql(f"DESCRIBE POLICY `{name}` ON {scope_kw} {_bt(scope)}")
+    except Exception:
+        return None
+    cols = {c.lower(): c for c in df.columns}
+    for d in (row.asDict() for row in df.collect()):
+        key = _pick(d, cols, ["info_name", "col_name", "name"])
+        if key and str(key).strip().lower() in ("function name", "function_name", "function"):
+            return _pick(d, cols, ["info_value", "data_type", "value"])
+    return None
 
 
 def _pick(d: dict, cols: dict, candidates: list[str]):
@@ -179,12 +207,3 @@ def _pick(d: dict, cols: dict, candidates: list[str]):
         if cand in cols:
             return d.get(cols[cand])
     return None
-
-
-def _norm_policy_type(v) -> str:
-    s = str(v or "").upper()
-    if "MASK" in s:
-        return "column_mask"
-    if "FILTER" in s or "ROW" in s:
-        return "row_filter"
-    return s.lower()

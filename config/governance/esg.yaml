@@ -1,0 +1,10 @@
+schema_version: "1.0"
+# Governance operational config for this deployment (hera-dev / ESG). Hand-curated, per-deployment;
+# sibling of config/reference/esg.yaml. Loaded raw by the reconcile notebook (no JSON schema).
+
+# ---- principals exempt from column masking (ETL / pipeline run-as identities) ----
+# Added to the EXCEPT clause of every column-mask policy so these principals read UNMASKED data.
+# This is critical for ETL: a masked read materialized by a pipeline would persist masked values
+# downstream. Use dedicated ETL groups where possible (a policy allows <=20 principals across
+# TO + EXCEPT). Example: hera-etl-ingest, sp-eastspring-pipelines.
+mask_exempt_principals: []

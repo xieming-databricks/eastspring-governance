@@ -174,6 +174,20 @@ def test_compile_error_surfaces_for_bad_bundle_object():
     assert not st.ok and st.errors
 
 
+# ---- column-mask policy target definition (for CREATE OR REPLACE DDL) ---
+
+def test_column_mask_policy_carries_definition_and_exempt():
+    docs = {"policies": {"schema_version": "1.0", "column_mask_policies": [
+        {"scope": "hera-dev.gold", "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
+         "function": "hera-dev.governance.acm_mask_full_name"}]}}
+    st = compile_config(docs, mask_exempt_principals=["hera-etl-b", "hera-etl-a", "  "])
+    assert len(st.policies) == 1
+    p = st.policies[0]
+    assert p.column_tag_key == "acm_pii_type" and p.column_tag_value == "FULL_NAME"
+    assert p.table_tag_key is None and p.table_tag_value is None      # no table_matching_tags
+    assert p.except_principals == "hera-etl-a,hera-etl-b"             # sorted, blanks dropped
+
+
 # ---- compile the real config/esg ----------------------------------------
 
 def test_compile_config_esg():

@@ -31,7 +31,8 @@ def _scope_type(scope: str) -> str:
     return {0: "catalog", 1: "schema", 2: "table"}.get(n, "table")
 
 
-def compile_config(docs: dict[str, Any]) -> TargetState:
+def compile_config(docs: dict[str, Any], *, mask_exempt_principals: Any = ()) -> TargetState:
+    exempt = ",".join(sorted(p.strip() for p in (mask_exempt_principals or []) if isinstance(p, str) and p.strip()))
     state = TargetState()
     base_grants = _doc(docs, "base_grants")
     rbac_view_grants = _doc(docs, "rbac_view_grants")
@@ -97,7 +98,12 @@ def compile_config(docs: dict[str, Any]) -> TargetState:
         pii = p["column_matching_tags"]["acm_pii_type"]
         sig = f"tmt={sorted(tmt.items())}|pii={pii}"
         name = policy_name("mask", scope, sig, descriptor=pii)
-        state.policies.append(TargetPolicy(scope, name, "column_mask", fn, sig))
+        # single-key table match (WHEN); only acm_business_function is defined for masks today
+        t_key, t_val = next(iter(tmt.items()), (None, None))
+        state.policies.append(TargetPolicy(
+            scope, name, "column_mask", fn, sig,
+            column_tag_key="acm_pii_type", column_tag_value=pii,
+            table_tag_key=t_key, table_tag_value=t_val, except_principals=exempt))
         state.refs.append(RefObject("function", fn, "policy.function"))
         state.refs.append(RefObject(_scope_type(scope), scope, "policy.scope"))
 

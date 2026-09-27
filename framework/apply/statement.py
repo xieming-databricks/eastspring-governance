@@ -4,15 +4,19 @@ No Spark here, so this is fully unit-testable offline. The Spark ``executor`` ru
 strings this module produces.
 
 Inputs are the delta-row dicts produced by ``reconcile.diff`` (with a ``change_type``):
-  * grants — {principal, privilege_type, securable_type, securable_fqn, change_type}
-  * tags   — {securable_type, securable_fqn, tag_key, tag_value, change_type}
+  * grants   — {principal, privilege_type, securable_type, securable_fqn, change_type}
+  * tags     — {securable_type, securable_fqn, tag_key, tag_value, change_type}
+  * policies — {scope, policy_name, function, except_principals, change_type}; ADD/CHANGE also
+               need the compiled target definition (``policy_defs[(scope, policy_name)]``) for the
+               MATCH COLUMNS / mask function, since the delta row alone doesn't carry them.
 
 No dialect conversion is needed: UC accepts the underscore ``privilege_type`` form
 (``USE_CATALOG``) directly in GRANT/REVOKE — verified against the workspace — and SQL
 keywords are case-insensitive, so ``securable_type.upper()`` is passed as the ``ON`` /
 ``ALTER`` keyword as-is. Rows therefore flow straight from information_schema into DDL.
 
-Policies are detect-only in v1: ``statements_for("policies", …)`` returns ``[]``.
+Column-mask policies are applied as ABAC DDL: ADD/CHANGE -> ``CREATE OR REPLACE POLICY``,
+REMOVE -> ``DROP POLICY``.
 """
 from __future__ import annotations
 
@@ -79,6 +83,43 @@ def tag_statement(row: Row) -> str:
     raise ApplyError(f"unexpected tag change_type {ct!r}")
 
 
+# ---- ABAC column-mask policies ------------------------------------------
+
+def _scope_keyword(scope: str) -> str:
+    """CATALOG / SCHEMA / TABLE from a scope fqn's dotted depth (mirrors compile._scope_type)."""
+    return {0: "CATALOG", 1: "SCHEMA", 2: "TABLE"}.get(scope.count("."), "TABLE")
+
+
+def policy_statement(row: Row, policy_def: dict | None) -> str:
+    """ADD/CHANGE -> CREATE OR REPLACE POLICY (from the compiled ``policy_def``);
+    REMOVE -> DROP POLICY (from the delta ``row`` — the live-only row has no target def)."""
+    scope, name, ct = row["scope"], row["policy_name"], row["change_type"]
+    kw = _scope_keyword(scope)
+    if ct == "REMOVE":
+        return f"DROP POLICY {name} ON {kw} {_qident(scope)}"
+    if ct in ("ADD", "CHANGE"):
+        if not policy_def:
+            raise ApplyError(f"no target definition for policy {scope}.{name}")
+        return _create_or_replace_policy(policy_def)
+    raise ApplyError(f"unexpected policy change_type {ct!r}")
+
+
+def _create_or_replace_policy(d: dict) -> str:
+    """Build the ABAC column-mask DDL from a compiled policy definition dict."""
+    lines = [f"CREATE OR REPLACE POLICY {d['policy_name']} ON {_scope_keyword(d['scope'])} {_qident(d['scope'])}",
+             f"COLUMN MASK {_qident(d['function'])}",
+             "TO `account users`"]
+    exempt = [p for p in (d.get("except_principals") or "").split(",") if p]
+    if exempt:
+        lines.append("EXCEPT " + ", ".join(_qprincipal(p) for p in exempt))
+    lines.append("FOR TABLES")
+    if d.get("table_tag_key"):
+        lines.append(f"WHEN has_tag_value({_qlit(d['table_tag_key'])}, {_qlit(d['table_tag_value'])})")
+    lines.append(f"MATCH COLUMNS has_tag_value({_qlit(d['column_tag_key'])}, {_qlit(d['column_tag_value'])}) AS c")
+    lines.append("ON COLUMN c")
+    return "\n".join(lines)
+
+
 # ---- dispatch -----------------------------------------------------------
 
 # ADD before REMOVE within a dimension: grant/set new state before revoking the old,
@@ -86,14 +127,21 @@ def tag_statement(row: Row) -> str:
 _ORDER = {"ADD": 0, "CHANGE": 1, "REMOVE": 2}
 
 
-def statements_for(dimension: str, rows: list[Row]) -> list[tuple[Row, str]]:
-    """(row, sql) pairs for a dimension's delta rows. 'policies' -> [] (detect-only in v1)."""
+def statements_for(dimension: str, rows: list[Row], *,
+                   policy_defs: dict | None = None) -> list[tuple[Row, str]]:
+    """(row, sql) pairs for a dimension's delta rows, ADD/CHANGE before REMOVE.
+
+    ``policy_defs`` maps ``(scope, policy_name) -> compiled definition dict`` and is required to
+    build CREATE OR REPLACE for policy ADD/CHANGE (ignored for grants/tags)."""
     if dimension == "grants":
         builder = grant_statement
     elif dimension == "tags":
         builder = tag_statement
     elif dimension == "policies":
-        return []
+        defs = policy_defs or {}
+
+        def builder(row):   # policies need the compiled def; grants/tags don't
+            return policy_statement(row, defs.get((row["scope"], row["policy_name"])))
     else:
         raise ApplyError(f"unknown dimension {dimension!r}")
 
@@ -101,16 +149,17 @@ def statements_for(dimension: str, rows: list[Row]) -> list[tuple[Row, str]]:
     return [(row, builder(row)) for row in ordered]
 
 
-# Dimensions the apply stage executes, in order. Policies are detect-only (see above).
-APPLIED_DIMENSIONS = ("grants", "tags")
+# Dimensions the apply stage executes, in order (grants/tags first, then column-mask policies).
+APPLIED_DIMENSIONS = ("grants", "tags", "policies")
 
 
-def plan_all(deltas: dict[str, list[Row]]) -> list[tuple[str, Row, str]]:
+def plan_all(deltas: dict[str, list[Row]], *,
+             policy_defs: dict | None = None) -> list[tuple[str, Row, str]]:
     """Flatten a whole delta into ordered ``(dimension, row, sql)`` triples ready for the
     executor. ``deltas`` maps dimension -> delta rows (the notebook's ``delta_counts``).
-    Only ``APPLIED_DIMENSIONS`` produce statements; policies are skipped."""
+    ``policy_defs`` (``{(scope, policy_name): definition}``) is needed to build policy CREATE DDL."""
     planned: list[tuple[str, Row, str]] = []
     for dim in APPLIED_DIMENSIONS:
-        for row, stmt in statements_for(dim, deltas.get(dim) or []):
+        for row, stmt in statements_for(dim, deltas.get(dim) or [], policy_defs=policy_defs):
             planned.append((dim, row, stmt))
     return planned

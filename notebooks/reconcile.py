@@ -23,7 +23,8 @@
 # MAGIC that off-list use warns against.
 # MAGIC
 # MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
-# MAGIC executes the grant + tag statements. Policies are always **detect-only**.
+# MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
+# MAGIC POLICY` — requires **ABAC-capable compute**).
 
 # COMMAND ----------
 
@@ -80,10 +81,19 @@ reference_path = config_path.parent / "reference" / f"{config_path.name}.yaml"
 reference = {}
 if reference_path.exists():
     reference = yaml.safe_load(reference_path.read_text()) or {}
+
+# Governance operational config (sibling ../governance/<name>.yaml): holds mask_exempt_principals
+# (ETL identities added to EXCEPT on every column-mask policy so pipelines read unmasked data).
+governance_path = config_path.parent / "governance" / f"{config_path.name}.yaml"
+governance = {}
+if governance_path.exists():
+    governance = yaml.safe_load(governance_path.read_text()) or {}
+mask_exempt_principals = governance.get("mask_exempt_principals") or []
 print(f"[reconcile] config_source={config_path} | "
       f"rbac_view_grants={'yes' if 'rbac_view_grants' in docs else 'no'} | "
       f"rbac_views={'yes' if 'rbac_views' in docs else 'no'} | "
-      f"reference={'yes' if reference else 'no'} ({reference_path.name})")
+      f"reference={'yes' if reference else 'no'} ({reference_path.name}) | "
+      f"mask_exempt_principals={mask_exempt_principals}")
 
 # COMMAND ----------
 
@@ -107,7 +117,9 @@ else:
 # DBTITLE 1,Compile -> target state (grants / tags / policies + referenced objects)
 from framework.compile import compile_config
 
-state = compile_config(docs)
+# mask_exempt_principals is stamped onto each column-mask policy's EXCEPT clause (target state),
+# so an exempt-list change surfaces as a policy CHANGE in the diff.
+state = compile_config(docs, mask_exempt_principals=mask_exempt_principals)
 if not state.ok:
     for err in state.errors:
         print(f"  {err}")
@@ -147,13 +159,13 @@ for dim, df in target.items():
 
 # COMMAND ----------
 
-# DBTITLE 1,Read live state from information_schema (+ SHOW POLICIES) — as DataFrames
+# DBTITLE 1,Read live state from information_schema (grants/tags/policies) — as DataFrames
 from framework.reconcile import live
 
 live_frames = {
-    "grants": live.read_live_grants(spark, catalogs),                        # noqa: F821
-    "tags": live.read_live_tags(spark, catalogs),                            # noqa: F821
-    "policies": live.read_live_policies(spark, scope.policy_scopes(state)),  # noqa: F821
+    "grants": live.read_live_grants(spark, catalogs),
+    "tags": live.read_live_tags(spark, catalogs),
+    "policies": live.read_live_policies(spark, catalogs),
 }
 existing = live.read_existing_objects(spark, catalogs)                       # noqa: F821
 print(f"[reconcile] live objects for preflight: {len(existing)}")
@@ -241,15 +253,20 @@ else:
 
 # COMMAND ----------
 
-# DBTITLE 1,Apply -> execute the grant + tag delta (GRANT / REVOKE / SET TAGS)
+# DBTITLE 1,Apply -> execute the grant + tag + policy delta (GRANT/REVOKE / SET TAGS / CREATE OR REPLACE|DROP POLICY)
 # mode=plan (default) previews the SQL and runs nothing; mode=apply executes via spark.sql.
-# Policies are detect-only in v1 (shown in the delta above, never applied).
+# Column-mask policies are applied as ABAC DDL -> requires ABAC-capable compute.
 from framework.apply import statement, executor
+from dataclasses import asdict
 
 mode = dbutils.widgets.get("mode").strip()
 dry_run = mode != "apply"
 
-planned = statement.plan_all(delta_counts)     # [(dimension, row, sql)] for grants + tags
+# Policy CREATE OR REPLACE needs the full compiled definition (MATCH COLUMNS / fn / EXCEPT),
+# which the delta row alone doesn't carry — look it up by (scope, policy_name).
+policy_defs = {(p.scope, p.policy_name): asdict(p) for p in state.policies}
+
+planned = statement.plan_all(delta_counts, policy_defs=policy_defs)  # [(dimension, row, sql)]
 apply_results = executor.apply(spark, planned, dry_run=dry_run)  # noqa: F821
 apply_res_df = executor.results_frame(spark, apply_results)      # noqa: F821
 
@@ -257,8 +274,7 @@ from collections import Counter as _Counter
 status_counts = dict(_Counter(r["status"] for r in apply_results))
 print(f"[apply] mode={mode} ({'DRY-RUN — nothing executed' if dry_run else 'EXECUTED'}) | "
       f"{len(planned)} statement(s) | {status_counts}")
-if state.policies:
-    print(f"[apply] note: {len(state.policies)} policy delta(s) are detect-only — not applied")
+print("[apply] note: column-mask policy DDL requires ABAC-capable compute")
 show(apply_res_df)
 
 # COMMAND ----------
