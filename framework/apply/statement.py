@@ -120,6 +120,31 @@ def _create_or_replace_policy(d: dict) -> str:
     return "\n".join(lines)
 
 
+# ---- dynamic views (view-based RLS) -------------------------------------
+
+def view_statement(spec: dict, *, entitlement_table: str, group_col: str = "ad_group") -> str:
+    """CREATE OR REPLACE VIEW for one ``rbac_views.yaml`` entry (dict: view / source / rls_column?).
+
+    ``rls_column`` set → a query-level semi-join to the entitlement allow-list (prunes via DFP;
+    NOT a row-filter UDF): rows where the fact's rls_column is in the caller's entitled set,
+    ``is_account_group_member`` evaluated on the allow-list's group column. Absent → pass-through.
+    """
+    view, source = spec["view"], spec["source"]
+    rls_col = spec.get("rls_column")
+    if not rls_col:
+        return f"CREATE OR REPLACE VIEW {_qident(view)} AS SELECT * FROM {_qident(source)}"
+    col = _qident(rls_col)
+    return (f"CREATE OR REPLACE VIEW {_qident(view)} AS\n"
+            f"SELECT f.* FROM {_qident(source)} f\n"
+            f"WHERE f.{col} IN (\n"
+            f"  SELECT {col} FROM {_qident(entitlement_table)}\n"
+            f"  WHERE is_account_group_member({_qident(group_col)}))")
+
+
+def drop_view_statement(fqn: str) -> str:
+    return f"DROP VIEW IF EXISTS {_qident(fqn)}"
+
+
 # ---- dispatch -----------------------------------------------------------
 
 # ADD before REMOVE within a dimension: grant/set new state before revoking the old,

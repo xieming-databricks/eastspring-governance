@@ -155,6 +155,39 @@ def test_policy_add_without_def_raises():
         statement.policy_statement(_prow("ADD"), None)
 
 
+# ---- dynamic views (view-based RLS) -------------------------------------
+
+def test_view_statement_pass_through():
+    sql = statement.view_statement(
+        {"view": "hera-dev.dm_esg.dim_fund", "source": "hera-dev.silver.dim_fund"},
+        entitlement_table="hera-dev.governance.group_portfolio_access")
+    assert sql == ("CREATE OR REPLACE VIEW `hera-dev`.`dm_esg`.`dim_fund` AS "
+                   "SELECT * FROM `hera-dev`.`silver`.`dim_fund`")
+
+
+def test_view_statement_rls_semijoin():
+    sql = statement.view_statement(
+        {"view": "hera-dev.dm_esg.fact_portfolio_position",
+         "source": "hera-dev.silver.fact_portfolio_position", "rls_column": "portfolio_code"},
+        entitlement_table="hera-dev.governance.group_portfolio_access")
+    assert sql.startswith("CREATE OR REPLACE VIEW `hera-dev`.`dm_esg`.`fact_portfolio_position` AS")
+    assert "SELECT f.* FROM `hera-dev`.`silver`.`fact_portfolio_position` f" in sql
+    assert "WHERE f.`portfolio_code` IN (" in sql
+    assert "SELECT `portfolio_code` FROM `hera-dev`.`governance`.`group_portfolio_access`" in sql
+    assert "WHERE is_account_group_member(`ad_group`))" in sql
+
+
+def test_view_statement_custom_group_col():
+    sql = statement.view_statement({"view": "c.s.v", "source": "c.s.t", "rls_column": "pc"},
+                                   entitlement_table="c.g.gpa", group_col="grp")
+    assert "is_account_group_member(`grp`)" in sql
+
+
+def test_drop_view_statement():
+    assert statement.drop_view_statement("hera-dev.dm_esg.dim_fund") == \
+        "DROP VIEW IF EXISTS `hera-dev`.`dm_esg`.`dim_fund`"
+
+
 # ---- dispatch / ordering ------------------------------------------------
 
 def test_statements_for_policies_looks_up_defs():

@@ -215,13 +215,28 @@ show(warn_df)
 
 # COMMAND ----------
 
-# DBTITLE 1,View preflight — serving schemas + views to create (detection only)
-# views.yaml lists the dynamic views the matrix expects (base table -> serving schema). This
-# DETECTS, without creating anything: serving schemas that are missing (provisioned by
-# Terraform), views that must be created, and live views in the serving schemas that are NOT
-# in the matrix (candidate deletes -> flagged as a warning).
-expected_views = sorted({v["view"] for v in (docs.get("rbac_views") or {}).get("views", [])})
+# DBTITLE 1,Dynamic views — serving schema + CREATE OR REPLACE (RLS semi-join / pass-through)
+# rbac_views.yaml lists the dynamic views the matrix expects (base table -> serving schema). We
+# DETECT missing serving schemas + views to create/drop, PREVIEW the DDL, and — in mode=apply —
+# CREATE OR REPLACE every expected view (RLS semi-join when rls_column is set, else pass-through)
+# and DROP live views in the serving schemas that are not in the matrix. Idempotent (ensure-all).
+#
+# FUTURE WORK: this orchestration (live-view read + ensure/drop loop) lives in the notebook, unlike
+# grants/tags/policies which go through statement.plan_all + executor.apply. Move it into
+# framework/ (live.read_live_views + a plan_views planner run via executor) for consistency and
+# unit-testability. Deferred by decision — ensure-all keeps it correct; this is a tidiness refactor.
+# Per-view drift *detection* (a stored (source, rls_column) contract / applied-state ledger) is also
+# deferred: ensure-all re-asserts every view each apply, so live always converges to desired.
+from framework.apply import statement as _stmt
+
+view_specs = {v["view"]: v for v in (docs.get("rbac_views") or {}).get("views", [])}
+expected_views = sorted(view_specs)
 serving_schemas = sorted({".".join(v.split(".")[:2]) for v in expected_views})
+mode = dbutils.widgets.get("mode").strip()  # noqa: F821  (also read in the apply cell)
+
+# RLS allow-list (group -> rls_column) the semi-join filters on; from config/governance/<env>.yaml.
+rls_entitlement_table = governance.get("rls_entitlement_table")
+rls_group_column = governance.get("rls_group_column", "ad_group")
 
 existing_schemas, live_views = set(), set()
 for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
@@ -234,22 +249,38 @@ for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
         print(f"[views] could not read information_schema in {_cat}: {exc}")
 
 serving_live = {v for v in live_views if ".".join(v.split(".")[:2]) in serving_schemas}
-missing_schemas = [s for s in serving_schemas if s not in existing_schemas]
-views_to_create = sorted(set(expected_views) - live_views)
 views_to_drop = sorted(serving_live - set(expected_views))
-
 print(f"[views] serving schemas expected: {serving_schemas}")
-print(f"[views] MISSING serving schemas (provision via Terraform): {missing_schemas or 'none'}")
-print(f"[views] views to CREATE ({len(views_to_create)}): {views_to_create}")
+print(f"[views] views to CREATE now ({len(set(expected_views) - live_views)}): "
+      f"{sorted(set(expected_views) - live_views)}")
 if views_to_drop:
-    print(f"[views] WARNING — live views not in the matrix ({len(views_to_drop)}): {views_to_drop}")
+    print(f"[views] live views not in the matrix -> DROP ({len(views_to_drop)}): {views_to_drop}")
 
-_view_rows = ([(v, "CREATE" if v in set(views_to_create) else "OK") for v in expected_views]
-              + [(v, "DELETE?") for v in views_to_drop])
-if _view_rows:
-    show(spark.createDataFrame(_view_rows, ["view", "action"]))  # noqa: F821
+# Build the DDL (pure); preview in both modes, execute only in apply.
+view_ddl = []
+for v in expected_views:
+    spec = view_specs[v]
+    if spec.get("rls_column") and not rls_entitlement_table:
+        print(f"[views] WARNING {v}: rls_column set but governance.rls_entitlement_table missing — skipped")
+        continue
+    view_ddl.append((v, _stmt.view_statement(spec, entitlement_table=rls_entitlement_table,
+                                             group_col=rls_group_column)))
+
+print(f"\n[views] {len(view_ddl)} view DDL ({'EXECUTE' if mode == 'apply' else 'PREVIEW — plan mode'}):")
+for v, sql in view_ddl:
+    print(f"\n-- {v}\n{sql}")
+
+if mode == "apply":
+    for s in serving_schemas:                                    # ensure serving schema exists
+        _c, _s = s.split(".", 1)
+        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{_c}`.`{_s}`")   # noqa: F821
+    for _v, sql in view_ddl:
+        spark.sql(sql)                                           # noqa: F821  (CREATE OR REPLACE VIEW)
+    for _v in views_to_drop:
+        spark.sql(_stmt.drop_view_statement(_v))                 # noqa: F821
+    print(f"\n[views] APPLIED — {len(view_ddl)} view(s) ensured, {len(views_to_drop)} dropped")
 else:
-    print("[views] no views expected (base-only config)")
+    print("\n[views] plan mode — nothing created/dropped")
 
 # COMMAND ----------
 
