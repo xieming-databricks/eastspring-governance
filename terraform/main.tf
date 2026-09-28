@@ -9,10 +9,16 @@ locals {
   reference = yamldecode(file("${path.module}/../config/reference/${var.env}.yaml"))
   catalog   = local.reference.target_catalog
 
-  # `schemas` entries are fully-qualified "<catalog>.<schema>"; keep the ones under target_catalog
-  # and strip the catalog prefix to the bare schema name.
+  # Terraform creates only the schemas it is authoritative over: governance (mask UDFs, gpa MV,
+  # entitlement tables) + serving (dynamic-view destinations). source_schemas (gold/silver) hold
+  # DE-owned base tables the framework only READS from, so they are NOT provisioned here. Entries
+  # are fully-qualified "<catalog>.<schema>"; keep those under target_catalog, strip the prefix.
+  all_schemas = concat(
+    try(local.reference.governance_schemas, []),
+    try(local.reference.serving_schemas, []),
+  )
   schemas = toset([
-    for s in try(local.reference.schemas, []) :
+    for s in local.all_schemas :
     trimprefix(s, "${local.catalog}.")
     if startswith(s, "${local.catalog}.")
   ])

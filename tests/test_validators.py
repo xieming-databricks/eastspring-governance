@@ -188,7 +188,9 @@ def test_labels_required(tmp_path):
 
 _REFERENCE = {
     "groups": ["ok-group"],
-    "schemas": ["testcat.approved"],
+    "source_schemas": ["testcat.approved"],    # base schemas
+    "governance_schemas": ["testcat.gov"],
+    "serving_schemas": ["testcat.serving"],     # dynamic-view destinations
     "data_products": ["approved_dp"],
     "governed_tags": {"acm_pii_type": ["FULL_NAME"]},   # keys = approved tag keys; lists = approved values
 }
@@ -259,9 +261,20 @@ def test_check_reference_clean_when_all_listed():
 
 def test_absent_reference_dimension_is_skipped():
     # 'groups' key absent => group vocabulary is "not curated" => no group warnings.
-    ref = {"schemas": ["testcat.approved"]}
+    ref = {"source_schemas": ["testcat.approved"]}
     docs = {"base_grants": {"grant_rules": [{"groups": ["ghost-group"], "bundle": "READ"}]}}
     assert check_reference(docs, ref) == []
+
+
+def test_check_reference_view_target_must_be_serving():
+    # a dynamic view's destination schema must be a declared serving_schema; the base source is a
+    # normal approved-schema reference (union of source/serving/governance).
+    docs = {"rbac_views": {"views": [
+        {"view": "testcat.serving.v1", "source": "testcat.approved.t1"},    # ok: serving dest, source in union
+        {"view": "testcat.approved.v2", "source": "testcat.approved.t2"}]}}  # bad: dest is a source schema
+    msgs = " | ".join(i.message for i in check_reference(docs, _REFERENCE))
+    assert "view target schema 'testcat.approved' is not a declared serving_schema" in msgs
+    assert "'testcat.serving'" not in msgs   # a real serving destination is fine
 
 
 def test_warnings_do_not_fail_validation():

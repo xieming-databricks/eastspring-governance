@@ -236,7 +236,8 @@ def _describe(doc: Any) -> str:
 
 def _describe_reference(reference: dict) -> str:
     """Compact summary of which dimensions the reference allow-list curates."""
-    dims = [f"{key}={len(reference[key])}" for key in ("groups", "schemas", "data_products")
+    dims = [f"{key}={len(reference[key])}"
+            for key in ("groups", "source_schemas", "governance_schemas", "serving_schemas", "data_products")
             if isinstance(reference.get(key), list)]
     gt = reference.get("governed_tags")
     if isinstance(gt, dict):
@@ -295,6 +296,7 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
     used_tag_keys: dict[str, tuple[str, str]] = {}
     used_tag_pairs: dict[tuple[str, str], tuple[str, str]] = {}
     used_data_products: dict[str, tuple[str, str]] = {}
+    used_view_targets: dict[str, tuple[str, str]] = {}
 
     def note(store: dict, key: Any, filename: str, path: str) -> None:
         store.setdefault(key, (filename, path))
@@ -330,15 +332,17 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
             if isinstance(dp, str):
                 note(used_data_products, dp, "labels.yaml", f"labels/{i}/labels/data_product")
 
-    # schemas from rbac_views (view + source FQNs)
+    # rbac_views: the view's DESTINATION schema must be a serving schema (role check); the base
+    # SOURCE schema is a normal approved-schema reference.
     doc = by_file.get("rbac_views.yaml")
     if isinstance(doc, dict):
         for i, v in enumerate(_as_list(doc.get("views"))):
             if not isinstance(v, dict):
                 continue
-            for f in ("view", "source"):
-                if s := _schema_of(v.get(f)):
-                    note(used_schemas, s, "rbac_views.yaml", f"views/{i}/{f}")
+            if s := _schema_of(v.get("view")):
+                note(used_view_targets, s, "rbac_views.yaml", f"views/{i}/view")
+            if s := _schema_of(v.get("source")):
+                note(used_schemas, s, "rbac_views.yaml", f"views/{i}/source")
 
     # schemas + tag keys/values from tags
     doc = by_file.get("tags.yaml")
@@ -382,12 +386,24 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
                 issues.append(Issue(fn, path, f"group {g!r} is not in the {_REF}",
                                     "reference", "warning"))
 
-    allowed_schemas = reference.get("schemas")
-    if allowed_schemas is not None:
-        allowed = set(allowed_schemas)
+    # approved-schema set = union of the role buckets (source + governance + serving).
+    src_schemas = reference.get("source_schemas")
+    srv_schemas = reference.get("serving_schemas")
+    gov_schemas = reference.get("governance_schemas")
+    if src_schemas is not None or srv_schemas is not None or gov_schemas is not None:
+        allowed = set(src_schemas or []) | set(srv_schemas or []) | set(gov_schemas or [])
         for s, (fn, path) in sorted(used_schemas.items()):
             if s not in allowed:
                 issues.append(Issue(fn, path, f"schema {s!r} is not in the {_REF}",
+                                    "reference", "warning"))
+
+    # a dynamic view's target (destination) schema must be a declared serving_schema.
+    if srv_schemas is not None:
+        serving = set(srv_schemas)
+        for s, (fn, path) in sorted(used_view_targets.items()):
+            if s not in serving:
+                issues.append(Issue(fn, path,
+                                    f"view target schema {s!r} is not a declared serving_schema",
                                     "reference", "warning"))
 
     allowed_data_products = reference.get("data_products")

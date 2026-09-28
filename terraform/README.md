@@ -1,9 +1,9 @@
 # `terraform/` — provision the catalog + schemas + account groups from `config/reference/<env>.yaml`
 
 Terraform owns the **Unity Catalog containers + identity** (per the design split): the
-`target_catalog`, the `schemas`, and the account `groups` declared in the deployment's reference
-allow-list. It reads that YAML directly (`yamldecode`), so the set stays in sync with the same file
-the framework and validator use — no duplication.
+`target_catalog`, the **governance + serving `schemas`**, and the account `groups` declared in the
+deployment's reference allow-list. It reads that YAML directly (`yamldecode`), so the set stays in
+sync with the same file the framework and validator use — no duplication.
 
 - `main.tf` — `databricks_catalog` + `databricks_schema` (workspace provider).
 - `groups.tf` — `databricks_group` (account provider). **AIM is enabled**, so each group is linked to
@@ -13,9 +13,11 @@ the framework and validator use — no duplication.
   set it `false` to create plain **local** Databricks account groups (no Entra, no `az login`) —
   the dev path that replaces the old `seed_esg_groups.sh`.
 
-What it does **not** do (by design): grants, tags, column-mask policies, dynamic views, UDFs, the
-`gpa` MV (all **framework**), and the `entitlements`/`entitlement_mapping` + base-table data
-(**customer**). See the ownership split in the project docs.
+What it does **not** do (by design): the **`source_schemas`** (gold/silver) — those hold DE-owned
+base tables the framework only reads from, so they are not provisioned here; grants, tags,
+column-mask policies, dynamic views, UDFs, the `gpa` MV (all **framework**); and the
+`entitlements`/`entitlement_mapping` + base-table data (**customer**). See the ownership split in
+the project docs.
 
 ## Usage
 ```bash
@@ -34,9 +36,11 @@ terraform apply -var env=esg
   If the metastore has no default managed storage, pass `-var storage_root=abfss://…`.
 - **Local dev (no Entra):** `terraform apply -var env=esg -var entra_linked_groups=false` creates the
   account groups with no external identity — this is the retired `seed_esg_groups.sh` path.
-- **Selectivity:** only `reference.schemas` entries under `target_catalog` are created; the bare
-  schema name is derived by stripping the `<catalog>.` prefix. Groups come straight from
-  `reference.groups`.
+- **Selectivity:** schemas are the **union** of `reference.governance_schemas` + `serving_schemas`
+  (created); `source_schemas` are deliberately excluded (DE-owned base tables). Only entries under
+  `target_catalog` are kept and the bare schema name is derived by stripping the `<catalog>.` prefix.
+  Groups come straight from `reference.groups`. (The validator additionally warns if a dynamic view's
+  target schema isn't a declared `serving_schema`.)
 
 ## Caveats
 - **Existing objects:** if the catalog/schemas already exist (e.g. seeded via

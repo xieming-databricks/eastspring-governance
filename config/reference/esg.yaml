@@ -49,13 +49,19 @@ groups:
   - hera-sg-fi-read-masked
   - hera-all-admin-admin-unmasked
 
-# ---- schemas: base + serving schemas the matrix may reference ----------
-schemas:
-  - hera-dev.gold          # base
-  - hera-dev.silver        # base
-  - hera-dev.governance    # base (helper/UDF schema)
-  - hera-dev.dm_esg        # serving (dynamic views)
-  - hera-dev.dm_something  # serving (example of a second target schema)
+# ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
+# governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.
+# source_schemas    : base tables live here — locked down; dynamic views READ from them.
+# serving_schemas   : dynamic views live here (end-users granted READ). A view's target_schema must
+#                     be one of these (validated as a fail-open warning).
+governance_schemas:
+  - hera-dev.governance
+source_schemas:
+  - hera-dev.gold
+  - hera-dev.silver
+serving_schemas:
+  - hera-dev.dm_esg
+  - hera-dev.dm_something
 
 # ---- data products: approved data_product asset labels (grant selection) -----
 # The data_product values the matrix may attach as labels / match grant rules on. Off-list
