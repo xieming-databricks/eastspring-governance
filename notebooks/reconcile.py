@@ -73,22 +73,18 @@ for opt in ("rbac_view_grants", "rbac_views"):
     if opt_path.exists():
         docs[opt] = yaml.safe_load(opt_path.read_text())
 
-# Reference allow-list: authoritative, hand-curated per-deployment vocabulary + the target
-# catalog + full-sync protected set. Lives at ../reference/<config_dir_name>.yaml (sibling of
-# the config dir), NOT generated from the workbook. Optional: absent -> warning layer skipped
-# and target_catalog must come from the widget.
+# Reference allow-list: authoritative, hand-curated per-deployment config. Lives at
+# ../reference/<config_dir_name>.yaml (sibling of the config dir), NOT generated from the workbook.
+# Holds the approved vocabulary (warning layer) + the target catalog, full-sync protected set, the
+# mask-exempt (ETL) principals, and the RLS entitlement table. Optional: absent -> warning layer
+# skipped and target_catalog must come from the widget.
 reference_path = config_path.parent / "reference" / f"{config_path.name}.yaml"
 reference = {}
 if reference_path.exists():
     reference = yaml.safe_load(reference_path.read_text()) or {}
 
-# Governance operational config (sibling ../governance/<name>.yaml): holds mask_exempt_principals
-# (ETL identities added to EXCEPT on every column-mask policy so pipelines read unmasked data).
-governance_path = config_path.parent / "governance" / f"{config_path.name}.yaml"
-governance = {}
-if governance_path.exists():
-    governance = yaml.safe_load(governance_path.read_text()) or {}
-mask_exempt_principals = governance.get("mask_exempt_principals") or []
+# ETL/pipeline identities added to EXCEPT on every column-mask policy so they read unmasked data.
+mask_exempt_principals = reference.get("mask_exempt_principals") or []
 print(f"[reconcile] config_source={config_path} | "
       f"rbac_view_grants={'yes' if 'rbac_view_grants' in docs else 'no'} | "
       f"rbac_views={'yes' if 'rbac_views' in docs else 'no'} | "
@@ -234,9 +230,9 @@ expected_views = sorted(view_specs)
 serving_schemas = sorted({".".join(v.split(".")[:2]) for v in expected_views})
 mode = dbutils.widgets.get("mode").strip()  # noqa: F821  (also read in the apply cell)
 
-# RLS allow-list (group -> rls_column) the semi-join filters on; from config/governance/<env>.yaml.
-rls_entitlement_table = governance.get("rls_entitlement_table")
-rls_group_column = governance.get("rls_group_column", "ad_group")
+# RLS allow-list (group -> rls_column) the semi-join filters on; from config/reference/<env>.yaml.
+rls_entitlement_table = reference.get("rls_entitlement_table")
+rls_group_column = reference.get("rls_group_column", "ad_group")
 
 existing_schemas, live_views = set(), set()
 for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
@@ -261,7 +257,7 @@ view_ddl = []
 for v in expected_views:
     spec = view_specs[v]
     if spec.get("rls_column") and not rls_entitlement_table:
-        print(f"[views] WARNING {v}: rls_column set but governance.rls_entitlement_table missing — skipped")
+        print(f"[views] WARNING {v}: rls_column set but reference.rls_entitlement_table missing — skipped")
         continue
     view_ddl.append((v, _stmt.view_statement(spec, entitlement_table=rls_entitlement_table,
                                              group_col=rls_group_column)))

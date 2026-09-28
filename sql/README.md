@@ -21,7 +21,8 @@ track git. `CREATE OR REPLACE` makes re-runs no-ops.
 - The `governance` schema must already exist (seeded/Terraform).
 
 **Masking model (confirm with governance):** the policy applies `TO account users EXCEPT <ETL>` —
-ETL/pipeline identities are exempted at the *policy* level (`config/governance/esg.yaml`). The
+ETL/pipeline identities are exempted at the *policy* level (`mask_exempt_principals` in
+`config/reference/esg.yaml`). The
 *business* "read-unmasked" groups are exempted here, inside the function, via
 `is_account_group_member(...)`. The transforms below are **placeholders** — replace with the
 approved masking logic.
