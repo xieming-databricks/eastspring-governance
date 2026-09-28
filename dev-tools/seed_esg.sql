@@ -3,9 +3,9 @@
 -- Creates the catalog / schemas / tables that config/esg references (via labels.yaml and the
 -- GR001 include), so the reconcile notebook can round-trip end-to-end (plan -> apply -> empty plan).
 --
--- NOTE ON GROUPS: Databricks has no CREATE GROUP SQL DDL — identities are provisioned via SCIM.
--- Create the five ESG workspace groups with the companion script BEFORE running an `apply`:
---     dev_tools/seed_esg_groups.sh
+-- NOTE ON GROUPS: the ESG account groups config/esg grants reference are created by Terraform
+-- (terraform/groups.tf) BEFORE running an `apply` — for dev without Entra, use the local-only path:
+--     cd terraform && terraform apply -var env=esg -var entra_linked_groups=false
 -- (grants to a non-existent principal fail at apply time.)
 --
 -- `hera-dev` contains a hyphen, so it MUST be backtick-quoted everywhere.
