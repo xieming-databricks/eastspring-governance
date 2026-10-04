@@ -24,16 +24,13 @@ locals {
   ])
 }
 
-resource "databricks_catalog" "this" {
-  name          = local.catalog
-  storage_root  = var.storage_root
+# The target catalog is a customer / metastore-admin-owned container, pre-created outside this
+# module — we do NOT create or look it up, we just create schemas under it by name. If the catalog
+# is missing, the schema create fails at apply (fail-closed); nothing here creates the catalog.
+resource "databricks_schema" "this" {
+  for_each      = local.schemas
+  catalog_name  = local.catalog
+  name          = each.value
   force_destroy = var.force_destroy
   comment       = "Provisioned by Terraform from config/reference/${var.env}.yaml"
-}
-
-resource "databricks_schema" "this" {
-  for_each     = local.schemas
-  catalog_name = databricks_catalog.this.name
-  name         = each.value
-  comment      = "Provisioned by Terraform from config/reference/${var.env}.yaml"
 }

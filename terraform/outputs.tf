@@ -1,10 +1,10 @@
 output "catalog" {
-  description = "The catalog provisioned for this env."
-  value       = databricks_catalog.this.name
+  description = "The pre-existing target catalog these schemas are created under (referenced by name, not created)."
+  value       = local.catalog
 }
 
 output "schemas" {
-  description = "Schemas provisioned under the catalog (from reference.schemas)."
+  description = "Schemas provisioned under the catalog (governance + serving)."
   value       = sort([for s in databricks_schema.this : s.name])
 }
 

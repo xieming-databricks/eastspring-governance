@@ -22,14 +22,8 @@ variable "entra_linked_groups" {
   default     = true
 }
 
-variable "storage_root" {
-  description = "Optional managed storage location (abfss://…) for the catalog; null uses the metastore's default managed storage."
-  type        = string
-  default     = null
-}
-
 variable "force_destroy" {
-  description = "Allow `terraform destroy` to drop the catalog even if it still contains schemas/objects."
+  description = "Allow `terraform destroy` to drop a schema even if it still contains objects (e.g. framework-created views in the serving schemas)."
   type        = bool
   default     = false
 }
