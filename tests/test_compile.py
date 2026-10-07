@@ -73,42 +73,80 @@ def test_unsupported_combo_raises(bundle, obj):
 
 # ---- compile: matching / include / exclude / dedup ----------------------
 
-def _cfg(grant_rules, tags):
+def _cfg(grant_rules, labels=None, tags=None):
     return {
-        "grants": {"schema_version": "1.0", "grant_rules": grant_rules},
-        "tags": {"schema_version": "1.0", "tags": tags},
+        "base_grants": {"schema_version": "1.0", "grant_rules": grant_rules},
+        "labels": {"schema_version": "1.0", "labels": labels or []},
+        "tags": {"schema_version": "1.0", "tags": tags or []},
         "policies": {"schema_version": "1.0"},
     }
 
 
-def test_match_selects_tagged_objects_only():
+def test_match_selects_labeled_objects_only():
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}},
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
         }],
-        tags=[
-            {"securable": {"type": "table", "name": "c.s.t1"}, "tags": {"acm_business_function": "investments"}},
-            {"securable": {"type": "table", "name": "c.s.t2"}, "tags": {"acm_business_function": "compliance"}},
-            {"securable": {"type": "view", "name": "c.s.v1"}, "tags": {"acm_business_function": "investments"}},
+        labels=[
+            {"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}},
+            {"securable": {"type": "table", "name": "c.s.t2"}, "labels": {"business_function": "compliance"}},
+            {"securable": {"type": "view", "name": "c.s.v1"}, "labels": {"business_function": "investments"}},
         ],
     )
     st = compile_config(docs)
     selected = {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"}
     assert "c.s.t1" in selected          # matched table
-    assert "c.s.t2" not in selected      # wrong tag value
+    assert "c.s.t2" not in selected      # wrong label value
     assert "c.s.v1" not in selected      # wrong object_type (view not requested)
+
+
+def test_labels_are_not_materialized_as_tags():
+    """Labels drive grant selection but must NEVER appear in the target tag state."""
+    docs = _cfg(
+        grant_rules=[{
+            "groups": ["g"], "bundle": "READ",
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
+        }],
+        labels=[{"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}}],
+        tags=[{"securable": {"type": "column", "name": "c.s.t1.name"}, "tags": {"acm_pii_type": "FULL_NAME"}}],
+    )
+    st = compile_config(docs)
+    assert {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"} == {"c.s.t1"}
+    # only the column tag is materialized; the business_function label is not
+    assert [(t.securable_type, t.securable_fqn, t.tag_key) for t in st.tags] == [
+        ("column", "c.s.t1.name", "acm_pii_type")]
+    assert all(t.tag_key != "business_function" for t in st.tags)
+
+
+def test_data_product_label_selection():
+    """data_product is a valid label key (free-string value); grant selects by it, hyphenated catalog ok."""
+    docs = _cfg(
+        grant_rules=[{
+            "groups": ["hera-all-esg-read-unmasked"], "bundle": "READ",
+            "match": {"object_types": ["table", "view"], "labels": {"data_product": "investment_esg"}},
+        }],
+        labels=[
+            {"securable": {"type": "table", "name": "hera-dev.gold.esg_waci"},
+             "labels": {"data_product": "investment_esg"}},
+            {"securable": {"type": "table", "name": "hera-dev.silver.fact_price"},
+             "labels": {"data_product": "market_data"}},
+        ],
+    )
+    st = compile_config(docs)
+    selected = {g.securable_fqn for g in st.grants if g.privilege_type == "SELECT"}
+    assert selected == {"hera-dev.gold.esg_waci"}    # only the investment_esg-labeled table
 
 
 def test_include_and_exclude():
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}},
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}},
             "include": [{"type": "function", "name": "c.s.f"}],
             "exclude": [{"type": "table", "name": "c.s.t1"}],
         }],
-        tags=[{"securable": {"type": "table", "name": "c.s.t1"}, "tags": {"acm_business_function": "investments"}}],
+        labels=[{"securable": {"type": "table", "name": "c.s.t1"}, "labels": {"business_function": "investments"}}],
     )
     st = compile_config(docs)
     fqns = {(g.securable_type, g.securable_fqn) for g in st.grants}
@@ -118,10 +156,10 @@ def test_include_and_exclude():
 
 def test_dedup_across_groups_and_rules():
     rule = {"groups": ["g"], "bundle": "READ",
-            "match": {"object_types": ["table"], "tags": {"acm_business_function": "investments"}}}
+            "match": {"object_types": ["table"], "labels": {"business_function": "investments"}}}
     docs = _cfg(
         grant_rules=[rule, dict(rule)],   # identical rule twice
-        tags=[{"securable": {"type": "table", "name": "c.s.t"}, "tags": {"acm_business_function": "investments"}}],
+        labels=[{"securable": {"type": "table", "name": "c.s.t"}, "labels": {"business_function": "investments"}}],
     )
     st = compile_config(docs)
     assert len(st.grants) == len(set(st.grants))    # no duplicates
@@ -131,17 +169,32 @@ def test_compile_error_surfaces_for_bad_bundle_object():
     docs = _cfg(
         grant_rules=[{"groups": ["g"], "bundle": "WRITE",
                       "include": [{"type": "function", "name": "c.s.f"}]}],
-        tags=[],
     )
     st = compile_config(docs)
     assert not st.ok and st.errors
 
 
-# ---- compile the real config/dev ----------------------------------------
+# ---- column-mask policy target definition (for CREATE OR REPLACE DDL) ---
 
-def test_compile_config_dev():
-    d = REPO / "config" / "dev"
-    docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text()) for k in ("grants", "tags", "policies")}
+def test_column_mask_policy_carries_definition_and_exempt():
+    docs = {"policies": {"schema_version": "1.0", "column_mask_policies": [
+        {"scope": "hera-dev.gold", "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
+         "function": "hera-dev.governance.acm_mask_full_name"}]}}
+    st = compile_config(docs, mask_exempt_principals=["hera-etl-b", "hera-etl-a", "  "])
+    assert len(st.policies) == 1
+    p = st.policies[0]
+    assert p.column_tag_key == "acm_pii_type" and p.column_tag_value == "FULL_NAME"
+    assert p.table_tag_key is None and p.table_tag_value is None      # no table_matching_tags
+    assert p.except_principals == "hera-etl-a,hera-etl-b"             # sorted, blanks dropped
+
+
+# ---- compile the real config/esg ----------------------------------------
+
+def test_compile_config_esg():
+    d = REPO / "config" / "esg"
+    docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
+            for k in ("base_grants", "rbac_view_grants", "rbac_views", "tags", "policies", "labels")
+            if (d / f"{k}.yaml").exists()}
     st = compile_config(docs)
     assert st.ok
     assert st.grants and st.tags and st.policies and st.refs

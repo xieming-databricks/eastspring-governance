@@ -41,10 +41,9 @@ def catalogs_from_config(docs: dict[str, Any]) -> list[str]:
         _catalog_of((entry.get("securable") or {}).get("name"), cats)
 
     policies = docs.get("policies") or {}
-    for key in ("column_mask_policies", "row_filter_policies"):
-        for pol in policies.get(key) or []:
-            _catalog_of(pol.get("scope"), cats)
-            _catalog_of(pol.get("function"), cats)
+    for pol in policies.get("column_mask_policies") or []:
+        _catalog_of(pol.get("scope"), cats)
+        _catalog_of(pol.get("function"), cats)
 
     return sorted(cats)
 
@@ -85,10 +84,12 @@ def protected_principals(*, deployer: str | None = None,
 
     ``deployer``      the run-as identity (``current_user()``) — resolved at run time,
                       self-lockout insurance for whoever actually runs the reconcile.
-    ``deployers``     declared deployment identities/groups from ``governance.yaml`` —
-                      protects the production service principal/group even when a human
-                      runs the notebook interactively (``current_user()`` would miss it).
-    ``admin_groups``  account/metastore admin groups from ``governance.yaml``.
+    ``deployers``     declared deployment identities/groups from the reference allow-list
+                      (``protected_principals.deployers``) — protects the production service
+                      principal/group even when a human runs the notebook interactively
+                      (``current_user()`` would miss it).
+    ``admin_groups``  account/metastore admin groups from the reference allow-list
+                      (``protected_principals.admin_groups``).
     """
     result: set[str] = set()
     if deployer:
@@ -100,5 +101,5 @@ def protected_principals(*, deployer: str | None = None,
 
 def protected_schemas(*, extra: Iterable[str] | None = None) -> set[str]:
     """Schema names full-sync must never touch: :data:`SYSTEM_SCHEMAS` plus any
-    ``protected_schemas`` from ``governance.yaml``."""
+    ``protected_schemas`` from the reference allow-list."""
     return set(SYSTEM_SCHEMAS) | _clean(extra)

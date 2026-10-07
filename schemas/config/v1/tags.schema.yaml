@@ -15,7 +15,7 @@ properties:
       $ref: '#/$defs/TagAssignment'
 $defs:
   TagAssignment:
-    $comment: 'Grain routing: column securables carry only acm_pii_type/acm_rls; asset securables carry only acm_business_function. Enforced via if/then on securable.type. ''a securable appears at most once in tags.yaml'' is a cross-item rule enforced in the semantic layer.'
+    $comment: Column-routing tags only (acm_pii_type) on COLUMN securables. Asset selection for grants lives in labels.yaml (labels, never materialized). 'a securable appears at most once in tags.yaml' is a cross-item rule enforced in the semantic layer.
     type: object
     additionalProperties: false
     required:
@@ -23,34 +23,22 @@ $defs:
     - tags
     properties:
       securable:
-        $ref: common.schema.yaml#/$defs/SecurableRef
+        $comment: Column securables only; asset securables carry labels (labels.yaml), not tags.
+        type: object
+        additionalProperties: false
+        required:
+        - type
+        - name
+        properties:
+          type:
+            const: column
+          name:
+            $ref: common.schema.yaml#/$defs/ColumnName
       tags:
         type: object
         minProperties: 1
         additionalProperties: false
         properties:
-          acm_business_function:
-            $ref: common.schema.yaml#/$defs/AcmBusinessFunction
           acm_pii_type:
-            $ref: common.schema.yaml#/$defs/AcmPiiType
-          acm_rls:
-            $ref: common.schema.yaml#/$defs/AcmRlsDimension
-    allOf:
-    - $comment: column grain -> only column-routing keys allowed
-      if:
-        properties:
-          securable:
-            properties:
-              type:
-                const: column
-      then:
-        properties:
-          tags:
-            properties:
-              acm_business_function: false
-      else:
-        properties:
-          tags:
-            properties:
-              acm_pii_type: false
-              acm_rls: false
+            $comment: Free non-empty string; the approved value vocabulary is validated (fail-open) against the reference allow-list's governed_tags, not by a closed enum here.
+            $ref: common.schema.yaml#/$defs/NonEmptyString

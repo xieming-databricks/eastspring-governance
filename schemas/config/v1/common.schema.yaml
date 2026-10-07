@@ -15,8 +15,8 @@ $defs:
     type: string
     pattern: ^[^.]*[^.\s][^.]*$
   CatalogName:
-    type: string
-    pattern: ^[^.]*[^.\s][^.]*$
+    $comment: A single catalog name — one dot-free part (same shape as NamePart).
+    $ref: '#/$defs/NamePart'
   SchemaName:
     type: string
     pattern: ^[^.]*[^.\s][^.]*\.[^.]*[^.\s][^.]*$
@@ -26,9 +26,6 @@ $defs:
   ColumnName:
     type: string
     pattern: ^[^.]*[^.\s][^.]*\.[^.]*[^.\s][^.]*\.[^.]*[^.\s][^.]*\.[^.]*[^.\s][^.]*$
-  Identifier:
-    type: string
-    pattern: ^[A-Za-z_][A-Za-z0-9_]*$
   FrameworkManagedFunctionName:
     $comment: FunctionName (ObjectName shape) whose final segment starts with 'acm_'.
     type: string
@@ -63,37 +60,27 @@ $defs:
     - OWNER
     - ADMIN
   FrameworkManagedTagKey:
-    $comment: Closed enum; every member starts with 'acm_'. Extend per release as the vocabulary grows.
+    $comment: Closed enum of MATERIALIZED tag keys (written to UC); every member starts with 'acm_'. Asset selection for grants uses labels (labels.yaml), which are NOT tags and are never materialized.
     enum:
-    - acm_business_function
     - acm_pii_type
-    - acm_rls
-  AcmBusinessFunction:
-    $comment: Release-populated vocabulary from the Access Matrix 'Business Functions' tab. Seeded with values observed in the design doc; extend for the actual release.
-    enum:
-    - investments
-    - performance_attribution
-    - compliance
-    - quants
-  AcmPiiType:
-    $comment: Column-routing key for masking. FULL_NAME + the cryptographic protections identifier/secret.
-    enum:
-    - FULL_NAME
-    - identifier
-    - secret
-  AcmRlsDimension:
-    $comment: Column-routing key for row-level security. Release-populated; seeded with doc examples.
-    enum:
-    - region
-    - legal_entity
+  LabelMap:
+    $comment: One or more config-only asset labels used to select securables in grant rules. Keys are business_function and/or data_product; values are free-form non-empty strings (the approved vocabulary is validated at generation time, not by a closed enum here). Labels are NEVER materialized to Unity Catalog (unlike tags.yaml column tags).
+    type: object
+    minProperties: 1
+    additionalProperties: false
+    properties:
+      business_function:
+        $ref: '#/$defs/NonEmptyString'
+      data_product:
+        $ref: '#/$defs/NonEmptyString'
   AssetTagMap:
-    $comment: One or more framework-managed asset-tag predicates (keys whose allowed grains include an object type). Grain-vs-key legality beyond column/asset split is enforced in the semantic (Static Validate) layer.
+    $comment: ABAC policy table-matching predicate (mask scoping by business_function). Value is a free-form non-empty string (approved vocabulary validated at generation time, not by a closed enum here). Referenced only by policies.yaml; policies are detect-only in v1. Grant selection uses LabelMap instead.
     type: object
     minProperties: 1
     additionalProperties: false
     properties:
       acm_business_function:
-        $ref: '#/$defs/AcmBusinessFunction'
+        $ref: '#/$defs/NonEmptyString'
   ObjectRef:
     $comment: Name shape is validated per declared type via oneOf.
     type: object

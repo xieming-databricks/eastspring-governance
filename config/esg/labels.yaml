@@ -1,0 +1,52 @@
+schema_version: '1.0'
+labels:
+- securable:
+    type: table
+    name: hera-dev.gold.esg_engagement
+  labels:
+    data_product: investment_research
+- securable:
+    type: table
+    name: hera-dev.gold.esg_waci
+  labels:
+    data_product: investment_esg
+- securable:
+    type: table
+    name: hera-dev.silver.dim_fund
+  labels:
+    data_product: mdm_portfolio_structure
+- securable:
+    type: table
+    name: hera-dev.silver.dim_mandate
+  labels:
+    data_product: mdm_portfolio_structure
+- securable:
+    type: table
+    name: hera-dev.silver.dim_portfolio
+  labels:
+    data_product: mdm_portfolio_structure
+- securable:
+    type: table
+    name: hera-dev.silver.dim_share_class
+  labels:
+    data_product: mdm_portfolio_structure
+- securable:
+    type: table
+    name: hera-dev.silver.fact_esg_engagement
+  labels:
+    data_product: investment_research
+- securable:
+    type: table
+    name: hera-dev.silver.fact_portfolio_position
+  labels:
+    data_product: portfolio_position
+- securable:
+    type: table
+    name: hera-dev.silver.fact_portfolio_transaction
+  labels:
+    data_product: portfolio_transaction
+- securable:
+    type: table
+    name: hera-dev.silver.fact_price
+  labels:
+    data_product: market_data

@@ -23,7 +23,8 @@ def spark():
 
 _GRANT = "principal string, privilege_type string, securable_type string, securable_fqn string"
 _TAG = "securable_type string, securable_fqn string, tag_key string, tag_value string"
-_POLICY = "scope string, policy_name string, policy_type string, function string"
+_POLICY = ("scope string, policy_name string, policy_type string, function string, "
+           "except_principals string")
 
 
 def _keyset(df, *cols):
@@ -85,14 +86,16 @@ def test_tags_add_remove_change(spark):
 
 def test_policies_change_and_namespace(spark):
     target = spark.createDataFrame([
-        ("c.s", "acm_policy_mask_x__h1", "column_mask", "c.g.new_fn"),
+        ("c.s", "acm_policy_mask_x__h1", "column_mask", "c.g.new_fn", "etl-a"),   # fn CHANGE
+        ("c.s", "acm_policy_mask_y__h2", "column_mask", "c.g.fn", "etl-a,etl-b"), # EXCEPT CHANGE
     ], _POLICY)
     live = spark.createDataFrame([
-        ("c.s", "acm_policy_mask_x__h1", "column_mask", "c.g.old_fn"),  # CHANGE
-        ("c.s", "someones_policy", "column_mask", "c.g.z"),             # non-framework -> ignored
+        ("c.s", "acm_policy_mask_x__h1", "column_mask", "c.g.old_fn", "etl-a"),   # function differs
+        ("c.s", "acm_policy_mask_y__h2", "column_mask", "c.g.fn", "etl-a"),       # except differs
+        ("c.s", "someones_policy", "column_mask", "c.g.z", ""),                   # non-framework -> ignored
     ], _POLICY)
     out = {(r["change_type"], r["policy_name"]) for r in diff.diff_policies(target, live).collect()}
-    assert out == {("CHANGE", "acm_policy_mask_x__h1")}
+    assert out == {("CHANGE", "acm_policy_mask_x__h1"), ("CHANGE", "acm_policy_mask_y__h2")}
 
 
 # ---- diff_all: out-of-catalog target rows ignored -----------------------

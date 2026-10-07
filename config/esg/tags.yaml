@@ -1,0 +1,37 @@
+schema_version: '1.0'
+tags:
+- securable:
+    type: column
+    name: hera-dev.gold.esg_engagement.author
+  tags:
+    acm_pii_type: FULL_NAME
+- securable:
+    type: column
+    name: hera-dev.gold.esg_waci.portfolio_code
+  tags:
+    acm_pii_type: identifier
+- securable:
+    type: column
+    name: hera-dev.silver.dim_fund.portfolio_code
+  tags:
+    acm_pii_type: identifier
+- securable:
+    type: column
+    name: hera-dev.silver.dim_mandate.portfolio_code
+  tags:
+    acm_pii_type: identifier
+- securable:
+    type: column
+    name: hera-dev.silver.dim_portfolio.portfolio_code
+  tags:
+    acm_pii_type: identifier
+- securable:
+    type: column
+    name: hera-dev.silver.fact_esg_engagement.author
+  tags:
+    acm_pii_type: FULL_NAME
+- securable:
+    type: column
+    name: hera-dev.silver.fact_portfolio_position.portfolio_code
+  tags:
+    acm_pii_type: identifier

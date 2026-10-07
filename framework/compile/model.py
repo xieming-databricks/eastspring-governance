@@ -30,16 +30,16 @@ class TargetTag:
 
 @dataclass(frozen=True, order=True)
 class TargetPolicy:
-    """One ABAC policy. Compared against SHOW POLICIES output.
-
-    ``policy_name`` is derived deterministically from (scope, kind, match signature)
-    so it is stable when only ``function`` changes — enabling CHANGE detection.
-    """
     scope: str              # catalog | schema | table fqn the policy is ON
     policy_name: str        # acm_policy_*
-    policy_type: str        # "column_mask" | "row_filter"
+    policy_type: str        # "column_mask" (row filters retired; RLS is view-based)
     function: str           # fully-qualified function (the mutable "value")
     match_signature: str = field(compare=False)   # human-readable match detail
+    column_tag_key: str = field(default="acm_pii_type", compare=False)   # MATCH COLUMNS tag key
+    column_tag_value: str = field(default="", compare=False)             # MATCH COLUMNS tag value
+    table_tag_key: str | None = field(default=None, compare=False)       # optional WHEN tag key
+    table_tag_value: str | None = field(default=None, compare=False)     # optional WHEN tag value
+    except_principals: str = field(default="", compare=False)            # sorted, comma-joined EXCEPT list
 
 
 @dataclass(frozen=True, order=True)

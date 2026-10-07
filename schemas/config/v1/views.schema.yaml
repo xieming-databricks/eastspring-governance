@@ -1,0 +1,33 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://eastspring.governance/schemas/config/v1/views.schema.yaml
+title: ViewsYaml (v1.0)
+$comment: Expected dynamic views derived from Base Tables' target_schema / rls_column. Each entry is one view (destination + base source + optional RLS column). A base table feeding multiple serving schemas yields multiple entries (distinct view fqns). Used by reconcile to detect missing serving schemas and views that must be created; a view fqn appears at most once (semantic layer).
+type: object
+additionalProperties: false
+required:
+- schema_version
+- views
+properties:
+  schema_version:
+    $ref: common.schema.yaml#/$defs/SchemaVersion
+  views:
+    type: array
+    items:
+      $ref: '#/$defs/ViewSpec'
+$defs:
+  ViewSpec:
+    type: object
+    additionalProperties: false
+    required:
+    - view
+    - source
+    properties:
+      view:
+        $comment: Destination view fqn (catalog.serving_schema.object).
+        $ref: common.schema.yaml#/$defs/ObjectName
+      source:
+        $comment: Base table fqn the view selects from.
+        $ref: common.schema.yaml#/$defs/ObjectName
+      rls_column:
+        $comment: Optional column the view row-filters on (omitted = no RLS in the view).
+        $ref: common.schema.yaml#/$defs/NamePart

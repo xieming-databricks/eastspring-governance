@@ -1,0 +1,83 @@
+schema_version: "1.0"
+# Reference allow-list (authoritative approved vocabulary) for this deployment (hera-dev / ESG).
+#
+# This is the single source of truth for the groups, schemas, data products, and governed tags
+# that the Access Matrix is allowed to use. Anything referenced by the workbook / generated config that is NOT
+# listed here should raise a validation WARNING (a soft, fail-open check — distinct from the hard,
+# fail-closed JSON-Schema validation). It is hand-curated by governance, not generated from the
+# workbook (the workbook is validated *against* it).
+
+# ---- target catalog: the single catalog this deployment is authoritative over ---
+# Full-sync makes this catalog framework-owned: any grant in it the config does not
+# declare becomes a REMOVE (minus the protected set below). The reconcile notebook
+# reads this instead of a hand-typed widget default.
+target_catalog: hera-dev
+
+# ---- protected set: full-sync guardrails (never REMOVE / never touch) ------------
+# deployers        account identities/groups that run the reconcile (protected even when
+#                  a human runs it interactively and current_user() would miss them).
+# admin_groups     account/metastore admin groups whose grants full-sync must never revoke.
+# protected_schemas extra schema names full-sync must never touch (on top of the built-in
+#                  information_schema).
+
+protected_principals:
+  deployers: []
+  admin_groups: [account admins]
+
+protected_schemas: []
+
+# ---- masking: principals exempt from column masking (ETL / pipeline run-as) ------
+# Added to the EXCEPT clause of every column-mask policy so these read UNMASKED data (a masked
+# read materialized by a pipeline would persist masked values downstream). Use dedicated ETL
+# groups where possible (<=20 principals across TO + EXCEPT). Example: hera-etl-ingest.
+mask_exempt_principals: []
+
+# ---- RLS: dynamic-view entitlement allow-list -----------------------------------
+# The group -> rls_column allow-list the dynamic views semi-join against:
+#   WHERE <rls_column> IN (SELECT <rls_column> FROM <rls_entitlement_table>
+#                          WHERE is_account_group_member(<rls_group_column>))
+# Framework-derived by sql/group_portfolio_access.sql from the customer-owned entitlements tables.
+rls_entitlement_table: hera-dev.governance.group_portfolio_access
+rls_group_column: ad_group
+
+# ---- groups: the account groups THIS deployment's matrix may grant to (names only) -------------
+# Groups are account assets: their inventory (name + Entra external_id) lives once, in
+# config/account/groups.yaml. Every name here must be in that inventory (validated as a warning).
+groups:
+  - hera-all-esg-read-unmasked
+  - hera-all-esg-read-masked
+  - hera-sg-esg-read-masked
+  - hera-sg-eq-read-masked
+  - hera-sg-fi-read-masked
+  - hera-all-admin-admin-unmasked
+
+# ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
+# governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.
+# source_schemas    : base tables live here — locked down; dynamic views READ from them.
+# serving_schemas   : dynamic views live here (end-users granted READ). A view's target_schema must
+#                     be one of these (validated as a fail-open warning).
+governance_schemas:
+  - hera-dev.governance
+source_schemas:
+  - hera-dev.gold
+  - hera-dev.silver
+serving_schemas:
+  - hera-dev.dm_esg
+  - hera-dev.dm_something
+
+# ---- data products: approved data_product asset labels (grant selection) -----
+# The data_product values the matrix may attach as labels / match grant rules on. Off-list
+# values raise a fail-open warning.
+data_products:
+  - investment_esg
+  - investment_research
+  - market_data
+  - mdm_portfolio_structure
+  - mdm_security
+  - portfolio_position
+  - portfolio_transaction
+
+# ---- governed tags: approved acm_-namespaced tag key -> approved values ------
+# The keys are the approved tag-key set; each list is the approved values for that key.
+governed_tags:
+  acm_pii_type: [FULL_NAME, EMAIL, PASSPORT, identifier, secret]

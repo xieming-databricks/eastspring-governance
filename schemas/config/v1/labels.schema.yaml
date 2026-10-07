@@ -1,0 +1,29 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://eastspring.governance/schemas/config/v1/labels.schema.yaml
+title: LabelsYaml (v1.0)
+$comment: Config-only asset labels used to select securables in grant rules (grants.yaml match.labels). Labels are NEVER materialized to Unity Catalog — unlike tags.yaml. A securable appears at most once (all its labels in one entry); that cross-item rule is enforced in the semantic layer.
+type: object
+additionalProperties: false
+required:
+- schema_version
+- labels
+properties:
+  schema_version:
+    $ref: common.schema.yaml#/$defs/SchemaVersion
+  labels:
+    type: array
+    items:
+      $ref: '#/$defs/LabelAssignment'
+$defs:
+  LabelAssignment:
+    $comment: Labels attach to asset securables only (catalog/schema/table/view/function/volume) — never a column. ObjectRef excludes the column type.
+    type: object
+    additionalProperties: false
+    required:
+    - securable
+    - labels
+    properties:
+      securable:
+        $ref: common.schema.yaml#/$defs/ObjectRef
+      labels:
+        $ref: common.schema.yaml#/$defs/LabelMap

@@ -1,0 +1,80 @@
+schema_version: '1.0'
+grant_rules:
+- rule_id: GR001
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: investment_esg
+  include:
+  - type: table
+    name: hera-dev.governance.example_esg_helper
+    exp_id: EX001
+  exclude:
+  - type: table
+    name: hera-dev.gold.example_restricted_esg
+    exp_id: EX002
+- rule_id: GR002
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: portfolio_position
+- rule_id: GR003
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: portfolio_transaction
+- rule_id: GR004
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: investment_research
+- rule_id: GR005
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: mdm_portfolio_structure
+- rule_id: GR006
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: mdm_security
+- rule_id: GR007
+  groups:
+  - hera-all-admin-admin-unmasked
+  bundle: ADMIN
+  match:
+    object_types:
+    - table
+    - view
+    labels:
+      data_product: market_data
