@@ -13,6 +13,7 @@ the compiled model / live state and belong to the Compile step, not here.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -277,6 +278,10 @@ def _cross_file_version(schema_versions: dict[str, Any]) -> list[Issue]:
 # Anything the config uses that the reference does not list is a WARNING (severity="warning"),
 # never an error: it flags drift for a human without blocking a deploy.
 
+# Shape of a Microsoft Entra ID Object ID (8-4-4-4-12 hex) — a group's AIM external_id.
+_GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+
 def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
     """Warn (never fail) for groups / ``catalog.schema`` / tag keys+values the config uses
     but the ``reference`` allow-list does not list.
@@ -378,12 +383,32 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
                         note(used_tag_pairs, (tk, tv), "policies.yaml", path)
 
     _REF = "reference allow-list (config/reference)"
+    # groups is a list of {name, external_id: <Entra Object ID | null>}; the names are the approved
+    # set. external_id is only shape-checked here — whether it is *required* depends on the
+    # provisioning mode (AIM vs local), enforced by the provisioning step.
     allowed_groups = reference.get("groups")
     if allowed_groups is not None:
-        allowed = set(allowed_groups)
+        entries = [g if isinstance(g, dict) else {} for g in allowed_groups]
+        allowed = {g.get("name") for g in entries if g.get("name")}
         for g, (fn, path) in sorted(used_groups.items()):
             if g not in allowed:
                 issues.append(Issue(fn, path, f"group {g!r} is not in the {_REF}",
+                                    "reference", "warning"))
+        seen: set[str] = set()
+        for i, entry in enumerate(entries):
+            name, ext = entry.get("name"), entry.get("external_id")
+            if not name:
+                issues.append(Issue("reference", f"groups/{i}", "group entry has no name",
+                                    "reference", "warning"))
+            elif name in seen:
+                issues.append(Issue("reference", f"groups/{i}/name",
+                                    f"group {name!r} is listed more than once",
+                                    "reference", "warning"))
+            seen.add(name)
+            if ext is not None and not _GUID.fullmatch(str(ext)):
+                issues.append(Issue("reference", f"groups/{i}/external_id",
+                                    f"external_id {ext!r} for group {name!r} is not a GUID "
+                                    "(expected the Entra ID Object ID)",
                                     "reference", "warning"))
 
     # approved-schema set = union of the role buckets (source + governance + serving).

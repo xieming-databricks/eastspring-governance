@@ -187,7 +187,7 @@ def test_labels_required(tmp_path):
 # ---- reference allow-list (fail-open warning layer) ---------------------
 
 _REFERENCE = {
-    "groups": ["ok-group"],
+    "groups": [{"name": "ok-group", "external_id": None}],   # external_id: Entra Object ID | null
     "source_schemas": ["testcat.approved"],    # base schemas
     "governance_schemas": ["testcat.gov"],
     "serving_schemas": ["testcat.serving"],     # dynamic-view destinations
@@ -259,6 +259,27 @@ def test_check_reference_clean_when_all_listed():
     assert check_reference(docs, _REFERENCE) == []
 
 
+def test_check_reference_flags_malformed_external_id():
+    # a group's external_id must look like an Entra Object ID (GUID); null (unlinked) is fine.
+    ref = {"groups": [
+        {"name": "ok-group",   "external_id": "0f8fad5b-d9cb-469f-a165-70867728950e"},   # valid GUID
+        {"name": "dev-group",  "external_id": None},                                     # local / unlinked
+        {"name": "typo-group", "external_id": "hera-sg-eq-read-masked"}]}                # a name, not an id
+    issues = check_reference({}, ref)
+    assert [i.path for i in issues] == ["groups/2/external_id"]
+    assert issues[0].severity == "warning" and "is not a GUID" in issues[0].message
+
+
+def test_check_reference_flags_duplicate_or_unnamed_group():
+    # list form can't enforce unique names the way a map did, so the reference layer does.
+    ref = {"groups": [{"name": "g1", "external_id": None},
+                      {"name": "g1", "external_id": None},        # duplicate
+                      {"external_id": None}]}                     # no name
+    msgs = {i.path: i.message for i in check_reference({}, ref)}
+    assert msgs == {"groups/1/name": "group 'g1' is listed more than once",
+                    "groups/2": "group entry has no name"}
+
+
 def test_absent_reference_dimension_is_skipped():
     # 'groups' key absent => group vocabulary is "not curated" => no group warnings.
     ref = {"source_schemas": ["testcat.approved"]}
@@ -295,7 +316,8 @@ def test_validate_dir_autoloads_sibling_reference(tmp_path):
     _write_config(cfg, g, p, t, l)
     (tmp_path / "reference").mkdir()
     (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": ["ok-group"]}, sort_keys=False))
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]},
+        sort_keys=False))
 
     result = validate_dir(cfg)             # auto-discovers config/reference/esg.yaml
     assert result.ok                       # schema-valid; only a warning
@@ -351,7 +373,8 @@ def test_reference_check_status_is_warnings_when_offlist(tmp_path):
     _write_config(cfg, g, p, t, l)
     (tmp_path / "reference").mkdir()
     (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": ["ok-group"]}, sort_keys=False))
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]},
+        sort_keys=False))
     by_target = {c.target: c for c in validate_dir(cfg).checks}
     assert by_target["reference"].status == "warnings"
 

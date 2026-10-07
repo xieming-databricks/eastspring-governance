@@ -3,11 +3,7 @@ terraform {
   required_providers {
     databricks = {
       source  = "databricks/databricks"
-      version = ">= 1.50"
-    }
-    azuread = {
-      source  = "hashicorp/azuread"
-      version = ">= 2.50"
+      version = ">= 1.131" # databricks_account_iam_external_group_v2 (AIM group resolve)
     }
   }
 }

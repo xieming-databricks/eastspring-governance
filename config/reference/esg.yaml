@@ -41,13 +41,17 @@ rls_entitlement_table: hera-dev.governance.group_portfolio_access
 rls_group_column: ad_group
 
 # ---- groups: account-level groups the matrix may grant to --------------
+# name is the approved group name (what grants reference). external_id is the group's Microsoft
+# Entra ID Object ID (GUID) — the authoritative AIM link — and it picks how the group is provisioned:
+#   set   -> resolved (and provisioned) from Entra ID via AIM (`iam-v2 resolve-group <external_id>`)
+#   null  -> created as a local Databricks account group (no Entra link)
 groups:
-  - hera-all-esg-read-unmasked
-  - hera-all-esg-read-masked
-  - hera-sg-esg-read-masked
-  - hera-sg-eq-read-masked
-  - hera-sg-fi-read-masked
-  - hera-all-admin-admin-unmasked
+  - { name: hera-all-esg-read-unmasked,    external_id: null }
+  - { name: hera-all-esg-read-masked,      external_id: null }
+  - { name: hera-sg-esg-read-masked,       external_id: null }
+  - { name: hera-sg-eq-read-masked,        external_id: null }
+  - { name: hera-sg-fi-read-masked,        external_id: null }
+  - { name: hera-all-admin-admin-unmasked, external_id: null }
 
 # ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
 # governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.

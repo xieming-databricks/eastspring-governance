@@ -1,15 +1,10 @@
-# Account groups from config/reference/<env>.yaml `groups`.
+# Account groups from config/reference/<env>.yaml `groups` (a list of { name, external_id }).
 #
-# Automatic Identity Management (AIM) is enabled, so a Databricks account group must be linked to its
-# Microsoft Entra ID group via `external_id` = the Entra group's object id (that's how membership
-# syncs from Entra). So we first SEARCH Entra ID by display name to resolve the object id, then
-# create the account group with that external_id. A group missing (or ambiguous) in Entra fails the
-# plan — you can't create a linked group without its Entra counterpart.
-
-provider "azuread" {
-  # Authenticates via Azure CLI (`az login`) by default; override with ARM_TENANT_ID / a service
-  # principal via the usual AzureAD provider env vars if running in CI.
-}
+# Each group's external_id picks how it is provisioned:
+#   set   (AIM)    resolved from Microsoft Entra ID by its external_id (the Entra Object ID).
+#                  Resolving PROVISIONS the group into the account if it isn't there yet — AIM makes
+#                  Entra groups searchable but does not add them on its own.
+#   null  (local)  created as a plain Databricks-managed account group, no Entra link.
 
 # Account-level Databricks provider (groups are account objects, not workspace objects).
 provider "databricks" {
@@ -18,24 +13,38 @@ provider "databricks" {
 }
 
 locals {
-  groups = toset(try(local.reference.groups, []))
+  # group name -> external_id (Entra Object ID, or null for a local group).
+  groups        = { for g in try(local.reference.groups, []) : g.name => try(g.external_id, null) }
+  linked_groups = { for name, ext in local.groups : name => ext if ext != null }
+  local_groups  = toset([for name, ext in local.groups : name if ext == null])
 }
 
-# 1 Entra-linked mode only: resolve each group's Entra ID object id by display name (security
-#    groups). Fails if not found or ambiguous — the intended fail-closed behavior. Skipped entirely
-#    (for_each = []) when entra_linked_groups = false, so local mode needs no Entra / az login.
-data "azuread_group" "entra" {
-  for_each         = var.entra_linked_groups ? local.groups : toset([])
-  display_name     = each.value
-  security_enabled = true
+# The account id (needed for the external-group resource name).
+data "databricks_current_config" "account" {
+  provider = databricks.account
 }
 
-# 2 Create the Databricks account group. Entra-linked -> external_id = the Entra object id (AIM
-#    syncs membership); local -> external_id = null (plain Databricks-managed account group).
+# 1 Groups WITH an external_id: resolve + provision by Entra Object ID (IAM v2 external-group API,
+#   Beta). NOTE this is a DATA source with a side effect — reading it provisions the group, so it
+#   happens at `plan`, and `terraform destroy` never removes it. The postcondition fails closed if
+#   the resolved Entra group's name differs from the reference name (catches a mistyped GUID).
+data "databricks_account_iam_external_group_v2" "this" {
+  provider = databricks.account
+  for_each = local.linked_groups
+  name     = "accounts/${data.databricks_current_config.account.account_id}/external-groups/${each.value}"
+
+  lifecycle {
+    postcondition {
+      condition     = self.display_name == each.key
+      error_message = "external_id for '${each.key}' resolves to Entra group '${self.display_name}' — the GUID or the name in config/reference/${var.env}.yaml is wrong."
+    }
+  }
+}
+
+# 2 Groups WITHOUT an external_id: plain Databricks-managed account groups.
 resource "databricks_group" "this" {
   provider     = databricks.account
-  for_each     = local.groups
+  for_each     = local.local_groups
   display_name = each.value
-  external_id  = var.entra_linked_groups ? data.azuread_group.entra[each.value].object_id : null
-  force        = true # adopt a same-named group already provisioned by AIM/SCIM instead of erroring
+  force        = true # adopt a same-named group that already exists instead of erroring
 }

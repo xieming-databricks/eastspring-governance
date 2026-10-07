@@ -49,5 +49,6 @@ terraform.rc
 
 
 .isaac/
+.claude/
 
 aux_files/
