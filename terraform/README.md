@@ -1,5 +1,11 @@
 # `terraform/` — provision account groups + env schemas, as two separate roots
 
+> **Primary path for DE teams: the Python + `databricks` CLI provisioner**
+> (`python -m framework.provision.cli groups|schemas`, see its `--help`). It reads the same YAML
+> with the same split. This Terraform is kept as an **alternative** for teams that use Terraform.
+> One behavioural difference: Terraform **drops** schemas / local groups removed from the YAML; the
+> CLI provisioner is **additive only** and never deletes.
+
 Terraform owns a slice of the **Unity Catalog containers + identity** (per the design split). It is
 split by **level**, because the two halves differ in scope, auth and ownership:
 

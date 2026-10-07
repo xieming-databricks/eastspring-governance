@@ -7,7 +7,8 @@
 # MAGIC it applies every `sql/*.sql` **idempotently** (`CREATE OR REPLACE`), so re-running is a no-op.
 # MAGIC
 # MAGIC **Convention:** one statement per file (each file is executed as a single `spark.sql` call —
-# MAGIC no `;`-splitting). The target `governance` schema must already exist (seed / Terraform).
+# MAGIC no `;`-splitting). The target `governance` schema must already exist
+# MAGIC (`python -m framework.provision.cli schemas`, or seed / Terraform).
 # MAGIC
 # MAGIC **`mode`:** `plan` (default) prints the SQL and runs nothing; `apply` executes it.
 

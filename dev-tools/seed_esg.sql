@@ -3,10 +3,11 @@
 -- Creates the catalog / schemas / tables that config/esg references (via labels.yaml and the
 -- GR001 include), so the reconcile notebook can round-trip end-to-end (plan -> apply -> empty plan).
 --
--- NOTE ON GROUPS: the ESG account groups config/esg grants reference are created by Terraform
--- (terraform/account/groups.tf) BEFORE running an `apply` — for dev without Entra, leave each group's
--- external_id null in config/account/groups.yaml (created as local groups), then:
---     cd terraform/account && terraform apply
+-- NOTE ON GROUPS: the ESG account groups config/esg grants reference must exist BEFORE running an
+-- `apply`. For dev without Entra, leave each group's external_id null in config/account/groups.yaml
+-- (created as local groups), then:
+--     python -m framework.provision.cli groups --profile <account-profile> --apply
+-- (or the Terraform alternative: cd terraform/account && terraform apply)
 -- (grants to a non-existent principal fail at apply time.)
 --
 -- `hera-dev` contains a hyphen, so it MUST be backtick-quoted everywhere.
