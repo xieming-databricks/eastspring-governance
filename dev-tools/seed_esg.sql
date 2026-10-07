@@ -4,9 +4,9 @@
 -- GR001 include), so the reconcile notebook can round-trip end-to-end (plan -> apply -> empty plan).
 --
 -- NOTE ON GROUPS: the ESG account groups config/esg grants reference are created by Terraform
--- (terraform/groups.tf) BEFORE running an `apply` — for dev without Entra, leave each group's
--- external_id null in config/reference/esg.yaml (created as local groups), then:
---     cd terraform && terraform apply -var env=esg
+-- (terraform/account/groups.tf) BEFORE running an `apply` — for dev without Entra, leave each group's
+-- external_id null in config/account/groups.yaml (created as local groups), then:
+--     cd terraform/account && terraform apply
 -- (grants to a non-existent principal fail at apply time.)
 --
 -- `hera-dev` contains a hyphen, so it MUST be backtick-quoted everywhere.

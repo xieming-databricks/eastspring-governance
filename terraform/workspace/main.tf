@@ -6,7 +6,7 @@ provider "databricks" {
 # this env is authoritative over. Terraform owns these *containers*; the governance framework fills
 # them (grants/tags/policies/views/UDFs) and the customer supplies entitlement/base data.
 locals {
-  reference = yamldecode(file("${path.module}/../config/reference/${var.env}.yaml"))
+  reference = yamldecode(file("${path.module}/../../config/reference/${var.env}.yaml"))
   catalog   = local.reference.target_catalog
 
   # Terraform creates only the schemas it is authoritative over: governance (mask UDFs, gpa MV,
