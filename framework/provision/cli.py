@@ -1,17 +1,22 @@
 """Provision account groups + env schemas via the databricks CLI (the CLI alternative to terraform/).
 
-    python -m framework.provision.cli groups  --profile <account-profile>            # plan
-    python -m framework.provision.cli groups  --profile <account-profile> --apply    # execute
+    python -m framework.provision.cli groups  --env esg --profile <workspace-profile>            # plan
+    python -m framework.provision.cli groups  --env esg --profile <workspace-profile> --apply    # execute
     python -m framework.provision.cli schemas --env esg --profile <workspace-profile> [--apply]
 
-groups   (account level, once per account) reads config/account/groups.yaml:
-           external_id set  -> `account iam-v2 resolve-group <external_id>` (AIM; provisions the
-                               Entra group into the account). Needs AIM onboarding.
-           external_id null -> `account groups create` (a local Databricks group).
-         Needs an ACCOUNT profile with account admin. Run it before any env's grants.
-schemas  (per env) reads config/reference/<env>.yaml: governance_schemas + serving_schemas under
-         target_catalog (the catalog itself is customer-owned and must already exist). Needs a
-         WORKSPACE profile with CREATE SCHEMA on the catalog.
+Both subcommands read config/reference/<env>.yaml and use a WORKSPACE profile — no account-level
+access is needed.
+
+groups   the reference's `groups` ({name, external_id}). Account groups are reached through the
+         workspace-level IAM v2 proxy API, which acts on the account that parents the workspace:
+           external_id set  -> `workspace-iam-v2 resolve-group-proxy <external_id>` (AIM; provisions
+                               the Entra group into the account). Needs AIM onboarding.
+           external_id null -> `workspace-iam-v2 create-group-proxy` (a local account group).
+         Needs WORKSPACE ADMIN on an identity-federated (Unity Catalog) workspace. The groups are
+         still account-level (usable in UC grants), unlike `databricks groups create`, which makes
+         workspace-local groups UC can't grant to. Run it before the env's grants.
+schemas  governance_schemas + serving_schemas under target_catalog (the catalog itself is
+         customer-owned and must already exist). Needs CREATE SCHEMA on the catalog.
 
 Without --apply it only reads (it never resolves: resolving provisions). It is additive only —
 nothing is ever deleted. --profile defaults to the CLI's own default profile. Exit code 0 on
@@ -27,23 +32,22 @@ from typing import Any
 
 import yaml
 
-from ..validation import check_account_groups
+from ..validation import check_reference
 from . import cli_runner, planner
 
 REPO = Path(__file__).resolve().parents[2]
 
 
-def _load(path: Path) -> dict[str, Any] | None:
-    if not path.exists():
-        print(f"not found: {path}")
-        return None
-    doc = yaml.safe_load(path.read_text())
-    return doc if isinstance(doc, dict) else {}
-
-
-def _display(path: Path) -> str:
+def _reference(args: argparse.Namespace) -> tuple[dict[str, Any] | None, str]:
+    """Load config/reference/<env>.yaml (or --reference); returns (doc or None, display path)."""
+    path = Path(args.reference) if args.reference else REPO / "config" / "reference" / f"{args.env}.yaml"
     resolved = path.resolve()
-    return str(resolved.relative_to(REPO)) if resolved.is_relative_to(REPO) else str(resolved)
+    shown = str(resolved.relative_to(REPO)) if resolved.is_relative_to(REPO) else str(resolved)
+    if not path.exists():
+        print(f"not found: {shown}")
+        return None, shown
+    doc = yaml.safe_load(path.read_text())
+    return (doc if isinstance(doc, dict) else {}), shown
 
 
 def _report(source: str, results: list[dict[str, Any]], apply: bool) -> int:
@@ -60,60 +64,55 @@ def _report(source: str, results: list[dict[str, Any]], apply: bool) -> int:
 
 
 def _groups(args: argparse.Namespace) -> int:
-    path = Path(args.account_file)
-    account = _load(path)
-    if account is None:
+    reference, source = _reference(args)
+    if reference is None:
         return 1
-    for w in check_account_groups(account):            # malformed GUID / duplicate / unnamed
+    for w in check_reference({}, reference):           # malformed GUID / duplicate / unnamed group
         print(f"WARNING {w}")
     try:
         live = cli_runner.list_account_groups(args.profile)
     except cli_runner.CliError as exc:
         print(f"could not list account groups: {exc}")
         return 1
-    results = cli_runner.execute(planner.plan_groups(account, live),
+    results = cli_runner.execute(planner.plan_groups(reference, live),
                                  profile=args.profile, dry_run=not args.apply)
-    return _report(_display(path), results, args.apply)
+    return _report(source, results, args.apply)
 
 
 def _schemas(args: argparse.Namespace) -> int:
-    path = Path(args.reference) if args.reference else REPO / "config" / "reference" / f"{args.env}.yaml"
-    reference = _load(path)
+    reference, source = _reference(args)
     if reference is None:
         return 1
     catalog = reference.get("target_catalog")
     if not catalog:
-        print(f"no target_catalog in {_display(path)}")
+        print(f"no target_catalog in {source}")
         return 1
     try:
         live = cli_runner.list_schemas(catalog, args.profile)
     except cli_runner.CliError as exc:
         print(f"could not list schemas in {catalog!r} (it must already exist): {exc}")
         return 1
-    source = _display(path)
     results = cli_runner.execute(planner.plan_schemas(reference, live, source=source),
                                  profile=args.profile, dry_run=not args.apply)
     return _report(source, results, args.apply)
 
 
 def main(argv: list[str] | None = None) -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--env", default="esg", help="selects config/reference/<env>.yaml (default: esg)")
+    common.add_argument("--reference", help="explicit path to the reference YAML (overrides --env)")
+    common.add_argument("--profile", help="WORKSPACE-level CLI profile (default: CLI default)")
+    common.add_argument("--apply", action="store_true", help="execute (default: plan only)")
+
     parser = argparse.ArgumentParser(prog="provision", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
-
-    g = sub.add_parser("groups", help="account groups from config/account/groups.yaml")
-    g.add_argument("--account-file", default=str(REPO / "config" / "account" / "groups.yaml"),
-                   help="account group inventory (default: config/account/groups.yaml)")
-    g.add_argument("--profile", help="ACCOUNT-level CLI profile (default: CLI default)")
-    g.add_argument("--apply", action="store_true", help="execute (default: plan only)")
-    g.set_defaults(func=_groups)
-
-    s = sub.add_parser("schemas", help="governance + serving schemas from config/reference/<env>.yaml")
-    s.add_argument("--env", default="esg", help="selects config/reference/<env>.yaml (default: esg)")
-    s.add_argument("--reference", help="explicit path to the reference YAML (overrides --env)")
-    s.add_argument("--profile", help="WORKSPACE-level CLI profile (default: CLI default)")
-    s.add_argument("--apply", action="store_true", help="execute (default: plan only)")
-    s.set_defaults(func=_schemas)
+    sub.add_parser("groups", parents=[common],
+                   help="account groups from the reference's `groups` (needs workspace admin)"
+                   ).set_defaults(func=_groups)
+    sub.add_parser("schemas", parents=[common],
+                   help="governance + serving schemas from the reference"
+                   ).set_defaults(func=_schemas)
 
     args = parser.parse_args(argv)
     return args.func(args)

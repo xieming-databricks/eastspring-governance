@@ -383,14 +383,32 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
                         note(used_tag_pairs, (tk, tv), "policies.yaml", path)
 
     _REF = "reference allow-list (config/reference)"
-    # groups: the group NAMES this deployment may grant to (the account inventory, with each
-    # group's external_id, is config/account/groups.yaml — see check_account_groups).
+    # groups is a list of {name, external_id: <Entra Object ID | null>}; the names are the approved
+    # set. external_id is only shape-checked here — whether it is *required* depends on how the
+    # group is provisioned (null = local group), which is the provisioning step's concern.
     allowed_groups = reference.get("groups")
     if allowed_groups is not None:
-        allowed = set(allowed_groups)
+        entries = [g if isinstance(g, dict) else {} for g in allowed_groups]
+        allowed = {g.get("name") for g in entries if g.get("name")}
         for g, (fn, path) in sorted(used_groups.items()):
             if g not in allowed:
                 issues.append(Issue(fn, path, f"group {g!r} is not in the {_REF}",
+                                    "reference", "warning"))
+        seen: set[str] = set()
+        for i, entry in enumerate(entries):
+            name, ext = entry.get("name"), entry.get("external_id")
+            if not name:
+                issues.append(Issue("reference", f"groups/{i}", "group entry has no name",
+                                    "reference", "warning"))
+            elif name in seen:
+                issues.append(Issue("reference", f"groups/{i}/name",
+                                    f"group {name!r} is listed more than once",
+                                    "reference", "warning"))
+            seen.add(name)
+            if ext is not None and not _GUID.fullmatch(str(ext)):
+                issues.append(Issue("reference", f"groups/{i}/external_id",
+                                    f"external_id {ext!r} for group {name!r} is not a GUID "
+                                    "(expected the Entra ID Object ID)",
                                     "reference", "warning"))
 
     # approved-schema set = union of the role buckets (source + governance + serving).
@@ -442,80 +460,26 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
     return issues
 
 
-_ACCOUNT_FILE = "account/groups.yaml"
-
-
-def check_account_groups(account: Any, reference: Any = None) -> list[Issue]:
-    """Warn (never fail) on the account group inventory (``config/account/groups.yaml``): entries
-    with no name, repeated names, or an ``external_id`` that isn't GUID-shaped. With a
-    ``reference``, also warn for every env group name missing from the inventory."""
-    issues: list[Issue] = []
-    entries = [g if isinstance(g, dict) else {} for g in (account or {}).get("groups") or []]
-    seen: set[str] = set()
-    for i, entry in enumerate(entries):
-        name, ext = entry.get("name"), entry.get("external_id")
-        if not name:
-            issues.append(Issue(_ACCOUNT_FILE, f"groups/{i}", "group entry has no name",
-                                "reference", "warning"))
-        elif name in seen:
-            issues.append(Issue(_ACCOUNT_FILE, f"groups/{i}/name",
-                                f"group {name!r} is listed more than once", "reference", "warning"))
-        seen.add(name)
-        # external_id is only shape-checked: whether it is *required* depends on how the group is
-        # provisioned (null = local group), which is the provisioning step's concern.
-        if ext is not None and not _GUID.fullmatch(str(ext)):
-            issues.append(Issue(_ACCOUNT_FILE, f"groups/{i}/external_id",
-                                f"external_id {ext!r} for group {name!r} is not a GUID "
-                                "(expected the Entra ID Object ID)", "reference", "warning"))
-    env_groups = reference.get("groups") if isinstance(reference, dict) else None
-    for i, name in enumerate(env_groups or []):
-        if name not in seen:
-            issues.append(Issue("reference", f"groups/{i}",
-                                f"group {name!r} is not in the account inventory ({_ACCOUNT_FILE})",
-                                "reference", "warning"))
-    return issues
-
-
-def _load_yaml_dict(path: Path) -> dict[str, Any] | None:
-    """A YAML mapping from ``path``, or None if absent / unparseable / not a mapping."""
-    if not path.exists():
+def _load_reference(config_dir: Path) -> dict[str, Any] | None:
+    """Auto-discover the reference allow-list at ``config/reference/<config_dir.name>.yaml``.
+    Returns None if absent or unparseable (a missing reference simply skips the warning layer)."""
+    ref_path = config_dir.parent / "reference" / f"{config_dir.name}.yaml"
+    if not ref_path.exists():
         return None
     try:
-        loaded = yaml.safe_load(path.read_text())
+        loaded = yaml.safe_load(ref_path.read_text())
     except yaml.YAMLError:
         return None
     return loaded if isinstance(loaded, dict) else None
 
 
-def _load_reference(config_dir: Path) -> dict[str, Any] | None:
-    """Auto-discover the reference allow-list at ``config/reference/<config_dir.name>.yaml``.
-    Returns None if absent or unparseable (a missing reference simply skips the warning layer)."""
-    return _load_yaml_dict(config_dir.parent / "reference" / f"{config_dir.name}.yaml")
-
-
-def _load_account_groups(config_dir: Path) -> dict[str, Any] | None:
-    """Auto-discover the account group inventory at ``config/account/groups.yaml``."""
-    return _load_yaml_dict(config_dir.parent / _ACCOUNT_FILE)
-
-
-def _record_account_groups(result: "ValidationResult", account: Any, reference: Any) -> None:
-    if isinstance(account, dict):
-        acct_issues = check_account_groups(account, reference)
-        result.issues.extend(acct_issues)
-        result.checks.append(Check("account groups", f"groups={len(account.get('groups') or [])}",
-                                   "warnings" if acct_issues else "ok"))
-    else:
-        result.checks.append(Check("account groups", f"no inventory found ({_ACCOUNT_FILE})", "skipped"))
-
-
 def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
-                 reference: Any = None, account_groups: Any = None) -> ValidationResult:
+                 reference: Any = None) -> ValidationResult:
     """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas.
 
     If ``reference`` is None, the allow-list at ``config/reference/<config_dir.name>.yaml`` is
     auto-loaded (when present) and its warnings appended. Pass an explicit dict to override, or
-    ``{}`` to disable the warning layer. Likewise ``account_groups`` (None auto-loads the account
-    inventory ``config/account/groups.yaml``; a dict overrides it).
+    ``{}`` to disable the warning layer.
     """
     config_dir = Path(config_dir)
     schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
@@ -570,10 +534,6 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
     else:
         result.checks.append(Check("reference", f"no allow-list found ({ref_path.name})", "skipped"))
 
-    if account_groups is None:
-        account_groups = _load_account_groups(config_dir)
-    _record_account_groups(result, account_groups, reference)
-
     return result
 
 
@@ -584,15 +544,14 @@ _SHORT_TO_FILE = {"base_grants": "base_grants.yaml", "rbac_view_grants": "rbac_v
 
 
 def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None,
-                  reference: Any = None, account_groups: Any = None) -> ValidationResult:
+                  reference: Any = None) -> ValidationResult:
     """Validate already-parsed config dicts against the YAML schemas.
 
     ``docs`` may be keyed by short name (``"grants"``) or filename (``"grants.yaml"``).
     Use this when config arrives as in-memory dicts (e.g. JSON job params) rather than
     files on disk. A missing dimension is reported as an issue, mirroring ``validate_dir``.
     Pass ``reference`` (the allow-list dict) to also append fail-open reference warnings; when
-    None the warning layer is skipped (there is no directory to auto-discover it from). Same
-    for ``account_groups`` (the account inventory dict).
+    None the warning layer is skipped (there is no directory to auto-discover it from).
     """
     schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
     by_file = {_SHORT_TO_FILE.get(key, key): doc for key, doc in docs.items()}
@@ -628,7 +587,6 @@ def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None,
                                    "warnings" if ref_issues else "ok"))
     else:
         result.checks.append(Check("reference", "no allow-list provided", "skipped"))
-    _record_account_groups(result, account_groups, reference)
     return result
 
 

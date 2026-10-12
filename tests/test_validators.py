@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from framework.validation import check_account_groups, check_reference, validate_dir, validate_docs
+from framework.validation import check_reference, validate_dir, validate_docs
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -187,7 +187,7 @@ def test_labels_required(tmp_path):
 # ---- reference allow-list (fail-open warning layer) ---------------------
 
 _REFERENCE = {
-    "groups": ["ok-group"],                     # names only (inventory: config/account/groups.yaml)
+    "groups": [{"name": "ok-group", "external_id": None}],   # external_id: Entra Object ID | null
     "source_schemas": ["testcat.approved"],    # base schemas
     "governance_schemas": ["testcat.gov"],
     "serving_schemas": ["testcat.serving"],     # dynamic-view destinations
@@ -259,36 +259,25 @@ def test_check_reference_clean_when_all_listed():
     assert check_reference(docs, _REFERENCE) == []
 
 
-# ---- account group inventory (config/account/groups.yaml) ----------------
-
-def test_account_groups_flags_malformed_external_id():
+def test_check_reference_flags_malformed_external_id():
     # a group's external_id must look like an Entra Object ID (GUID); null (local group) is fine.
-    account = {"groups": [
+    ref = {"groups": [
         {"name": "ok-group",   "external_id": "0f8fad5b-d9cb-469f-a165-70867728950e"},   # valid GUID
         {"name": "dev-group",  "external_id": None},                                     # local group
         {"name": "typo-group", "external_id": "hera-sg-eq-read-masked"}]}                # a name, not an id
-    issues = check_account_groups(account)
-    assert [(i.file, i.path) for i in issues] == [("account/groups.yaml", "groups/2/external_id")]
+    issues = check_reference({}, ref)
+    assert [(i.file, i.path) for i in issues] == [("reference", "groups/2/external_id")]
     assert issues[0].severity == "warning" and "is not a GUID" in issues[0].message
 
 
-def test_account_groups_flags_duplicate_or_unnamed_group():
-    account = {"groups": [{"name": "g1", "external_id": None},
-                          {"name": "g1", "external_id": None},    # duplicate
-                          {"external_id": None}]}                 # no name
-    msgs = {i.path: i.message for i in check_account_groups(account)}
+def test_check_reference_flags_duplicate_or_unnamed_group():
+    # a list can't enforce unique names the way a map would, so the reference layer does.
+    ref = {"groups": [{"name": "g1", "external_id": None},
+                      {"name": "g1", "external_id": None},        # duplicate
+                      {"external_id": None}]}                     # no name
+    msgs = {i.path: i.message for i in check_reference({}, ref)}
     assert msgs == {"groups/1/name": "group 'g1' is listed more than once",
                     "groups/2": "group entry has no name"}
-
-
-def test_env_group_must_be_in_account_inventory():
-    # the env reference lists names only; each must exist in the account inventory.
-    account = {"groups": [{"name": "ok-group", "external_id": None}]}
-    issues = check_account_groups(account, {"groups": ["ok-group", "env-only-group"]})
-    assert [(i.file, i.path, i.message) for i in issues] == [
-        ("reference", "groups/1",
-         "group 'env-only-group' is not in the account inventory (account/groups.yaml)")]
-    assert check_account_groups(account, {"groups": ["ok-group"]}) == []
 
 
 def test_absent_reference_dimension_is_skipped():
@@ -327,7 +316,7 @@ def test_validate_dir_autoloads_sibling_reference(tmp_path):
     _write_config(cfg, g, p, t, l)
     (tmp_path / "reference").mkdir()
     (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": ["ok-group"]}, sort_keys=False))
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
 
     result = validate_dir(cfg)             # auto-discovers config/reference/esg.yaml
     assert result.ok                       # schema-valid; only a warning
@@ -335,25 +324,6 @@ def test_validate_dir_autoloads_sibling_reference(tmp_path):
 
     # explicit reference={} disables the warning layer
     assert validate_dir(cfg, reference={}).warnings == []
-
-
-def test_validate_dir_autoloads_account_inventory(tmp_path):
-    cfg = tmp_path / "esg"
-    cfg.mkdir()
-    _write_config(cfg, *_baseline())
-    (tmp_path / "reference").mkdir()
-    (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": ["grp-read", "not-in-account"]}, sort_keys=False))
-    (tmp_path / "account").mkdir()
-    (tmp_path / "account" / "groups.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": [{"name": "grp-read", "external_id": None}]},
-        sort_keys=False))
-
-    result = validate_dir(cfg)             # auto-discovers config/account/groups.yaml
-    assert result.ok
-    assert [w.message for w in result.warnings] == [
-        "group 'not-in-account' is not in the account inventory (account/groups.yaml)"]
-    assert {c.target: c for c in result.checks}["account groups"].status == "warnings"
 
 
 def test_esg_config_has_no_reference_warnings():
@@ -372,7 +342,6 @@ def test_checks_recorded_for_clean_config():
     assert by_target["rbac_views.yaml"].status == "ok"             # optional-but-present is checked
     assert by_target["schema_version"].status == "ok"
     assert by_target["reference"].status == "ok"                   # auto-loaded, no warnings
-    assert by_target["account groups"].status == "ok"              # config/account/groups.yaml too
 
 
 def test_checks_note_absent_optional(tmp_path):
@@ -403,7 +372,7 @@ def test_reference_check_status_is_warnings_when_offlist(tmp_path):
     _write_config(cfg, g, p, t, l)
     (tmp_path / "reference").mkdir()
     (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": ["ok-group"]}, sort_keys=False))
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
     by_target = {c.target: c for c in validate_dir(cfg).checks}
     assert by_target["reference"].status == "warnings"
 

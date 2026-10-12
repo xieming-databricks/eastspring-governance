@@ -40,16 +40,23 @@ mask_exempt_principals: []
 rls_entitlement_table: hera-dev.governance.group_portfolio_access
 rls_group_column: ad_group
 
-# ---- groups: the account groups THIS deployment's matrix may grant to (names only) -------------
-# Groups are account assets: their inventory (name + Entra external_id) lives once, in
-# config/account/groups.yaml. Every name here must be in that inventory (validated as a warning).
+# ---- groups: the account groups THIS deployment's matrix may grant to, and how to provision them --
+# Provisioned per workspace (`python -m framework.provision.cli groups --env <env>`, through the
+# workspace-level IAM v2 proxy API — no account-level access needed). The groups themselves are
+# still account-level (usable in UC grants); an env that shares a group with another env lists it too.
+#
+# name        the group's display name (what grants reference).
+# external_id the group's Microsoft Entra ID Object ID (GUID) — the authoritative AIM link — and
+#             it picks how the group is provisioned:
+#               set   -> resolved (and provisioned) from Entra ID via AIM (`resolve-group-proxy`)
+#               null  -> created as a local Databricks account group (no Entra link)
 groups:
-  - hera-all-esg-read-unmasked
-  - hera-all-esg-read-masked
-  - hera-sg-esg-read-masked
-  - hera-sg-eq-read-masked
-  - hera-sg-fi-read-masked
-  - hera-all-admin-admin-unmasked
+  - { name: hera-all-esg-read-unmasked,    external_id: null }
+  - { name: hera-all-esg-read-masked,      external_id: null }
+  - { name: hera-sg-esg-read-masked,       external_id: null }
+  - { name: hera-sg-eq-read-masked,        external_id: null }
+  - { name: hera-sg-fi-read-masked,        external_id: null }
+  - { name: hera-all-admin-admin-unmasked, external_id: null }
 
 # ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
 # governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.

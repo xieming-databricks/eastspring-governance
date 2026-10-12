@@ -1,9 +1,10 @@
-"""Plan group + schema provisioning from the account inventory / env reference (pure Python).
+"""Plan group + schema provisioning from the env reference allow-list (pure Python).
 
 Each planner compares what the YAML declares against what exists live and returns one ``Action``
 per declared object:
 
-- ``plan_groups(account, live_groups)``  — config/account/groups.yaml
+- ``plan_groups(reference, live_groups)``  — config/reference/<env>.yaml ``groups`` (via the
+  workspace proxy API)
     ``external_id: null``   (local): EXISTS | CREATE
     ``external_id: <GUID>`` (AIM):   EXISTS | RESOLVE | CONFLICT
 - ``plan_schemas(reference, live_schemas)`` — config/reference/<env>.yaml
@@ -33,14 +34,14 @@ class Action:
     note: str = ""
 
 
-# ---- groups (account level) ------------------------------------------------
+# ---- groups (account groups, provisioned per env) ---------------------------
 
-def desired_groups(account: dict[str, Any]) -> list[tuple[str, str | None]]:
-    """``[(name, external_id | None)]`` from the inventory's ``groups`` list, in order. Entries
+def desired_groups(reference: dict[str, Any]) -> list[tuple[str, str | None]]:
+    """``[(name, external_id | None)]`` from the reference's ``groups`` list, in order. Entries
     without a name are skipped and a repeated name keeps its first entry (the validator warns)."""
     out: list[tuple[str, str | None]] = []
     seen: set[str] = set()
-    for entry in account.get("groups") or []:
+    for entry in reference.get("groups") or []:
         name = entry.get("name") if isinstance(entry, dict) else None
         if not name or name in seen:
             continue
@@ -50,23 +51,26 @@ def desired_groups(account: dict[str, Any]) -> list[tuple[str, str | None]]:
     return out
 
 
-def plan_groups(account: dict[str, Any], live_groups: list[dict[str, Any]]) -> list[Action]:
-    """One ``Action`` per inventory group. ``live_groups`` are the account's SCIM groups
-    (``displayName`` / ``externalId``)."""
-    by_name = {g.get("displayName"): g for g in live_groups if g.get("displayName")}
-    by_ext = {str(g["externalId"]).lower(): g for g in live_groups if g.get("externalId")}
+def plan_groups(reference: dict[str, Any], live_groups: list[dict[str, Any]]) -> list[Action]:
+    """One ``Action`` per declared group. ``live_groups`` are the account's groups as returned by
+    ``workspace-iam-v2 list-groups-proxy`` (``group_name`` / ``external_id``).
+
+    Every command goes through the workspace-level IAM v2 *proxy* API, which acts on the account
+    that parents the workspace — so this needs a workspace admin, never account-level access."""
+    by_name = {g.get("group_name"): g for g in live_groups if g.get("group_name")}
+    by_ext = {str(g["external_id"]).lower(): g for g in live_groups if g.get("external_id")}
     actions: list[Action] = []
-    for name, ext in desired_groups(account):
+    for name, ext in desired_groups(reference):
         if ext is None:                                       # local group
             if name in by_name:
                 actions.append(Action("group", name, EXISTS))
             else:
                 actions.append(Action("group", name, CREATE,
-                                      ("account", "groups", "create", "--display-name", name)))
+                                      ("workspace-iam-v2", "create-group-proxy", "--group-name", name)))
             continue
         linked = by_ext.get(ext.lower())                      # AIM group
         if linked is not None:
-            live_name = linked.get("displayName")
+            live_name = linked.get("group_name")
             if live_name == name:
                 actions.append(Action("group", name, EXISTS, external_id=ext))
             else:
@@ -79,7 +83,7 @@ def plan_groups(account: dict[str, Any], live_groups: list[dict[str, Any]]) -> l
                                        "external_id (e.g. a local group) — delete it first"))
         else:
             actions.append(Action("group", name, RESOLVE,
-                                  ("account", "iam-v2", "resolve-group", ext), external_id=ext))
+                                  ("workspace-iam-v2", "resolve-group-proxy", ext), external_id=ext))
     return actions
 
 

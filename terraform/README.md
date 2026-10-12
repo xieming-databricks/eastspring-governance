@@ -3,20 +3,24 @@
 > **Primary path for DE teams: the Python + `databricks` CLI provisioner**
 > (`python -m framework.provision.cli groups|schemas`, see its `--help`). It reads the same YAML
 > with the same split. This Terraform is kept as an **alternative** for teams that use Terraform.
-> One behavioural difference: Terraform **drops** schemas / local groups removed from the YAML; the
-> CLI provisioner is **additive only** and never deletes.
+> Two behavioural differences:
+> - **Access:** the CLI provisioner needs **no account-level access** — it reaches account groups
+>   through the workspace-level IAM v2 *proxy* API (a **workspace admin** profile). This Terraform's
+>   `account/` root uses the account-level provider and needs **account admin**.
+> - **Deletes:** Terraform **drops** schemas / local groups removed from the YAML; the CLI
+>   provisioner is **additive only** and never deletes.
 
 Terraform owns a slice of the **Unity Catalog containers + identity** (per the design split). It is
-split by **level**, because the two halves differ in scope, auth and ownership:
+split by **provider level**, because the two halves need different auth:
 
-| Root | Provisions | Reads | Auth / rights | Scope |
-|---|---|---|---|---|
-| `account/` | account **groups** | `config/account/groups.yaml` | account profile, **account admin** | once per account (shared by every env) |
-| `workspace/` | governance + serving **schemas** | `config/reference/<env>.yaml` | workspace profile, `CREATE SCHEMA` | once per env |
+| Root | Provisions | Reads | Auth / rights |
+|---|---|---|---|
+| `account/` | account **groups** | `config/reference/<env>.yaml` `groups` | account profile, **account admin** |
+| `workspace/` | governance + serving **schemas** | `config/reference/<env>.yaml` | workspace profile, `CREATE SCHEMA` |
 
-Each root reads its YAML directly (`yamldecode`) — the same files the framework and validator use,
-so nothing is duplicated. Each root has its own state and lock file. Apply `account/` first: grants
-in an env fail if the groups they name don't exist yet.
+Both roots read the env's reference YAML directly (`yamldecode`) — the same file the framework and
+validator use, so nothing is duplicated — and take `-var env=<env>`. Each root has its own state
+and lock file. Apply `account/` first: grants in an env fail if the groups they name don't exist yet.
 
 What it does **not** do (by design): create the **`target_catalog`** (customer / metastore-admin
 pre-creates it; we only reference it by name); the **`source_schemas`** (gold/silver) — those hold DE-owned
@@ -26,25 +30,29 @@ column-mask policies, dynamic views, UDFs, the `gpa` MV (all **framework**); and
 the project docs.
 
 ## `account/` — account groups
-Each `config/account/groups.yaml` entry's **`external_id`** picks how the group is provisioned:
+Each `config/reference/<env>.yaml` `groups` entry's **`external_id`** picks how the group is
+provisioned:
 - **set (AIM):** resolved from Microsoft Entra ID by that Entra **Object ID**, via the
   `databricks_account_iam_external_group_v2` data source (IAM v2 API, Beta). Resolving
   **provisions** the group into the account if it isn't there — AIM makes Entra groups searchable
   but does not add them on its own. Fails closed if the GUID resolves to an Entra group whose name
-  differs from the inventory name.
+  differs from the reference name.
 - **null (local):** a plain Databricks-managed `databricks_group`, no Entra link — the dev path
   that replaces the old `seed_esg_groups.sh`.
 
 ```bash
 cd terraform/account
 terraform init
-terraform plan                         # -var databricks_account_profile=<account profile>
-terraform apply
+terraform plan  -var env=esg          # -var databricks_account_profile=<account profile>
+terraform apply -var env=esg
 ```
 - **Prereqs:** account-admin rights. For any group with an `external_id`, the account must be
   **onboarded to AIM** and the group must **already exist in Entra ID**.
-- Each env's `config/reference/<env>.yaml` lists only the group **names** it may grant to; the
-  validator warns if a name isn't in the account inventory.
+- **No account access?** Use the CLI provisioner instead (`framework.provision.cli groups`), which
+  reaches the same account groups through the workspace proxy API with a workspace-admin profile.
+- **Groups shared by several envs:** each env lists the group in its own reference. With one
+  Terraform state per env, two envs managing the same local group would both try to own it — use
+  `force = true` adoption (already set) knowingly, or manage shared groups from one env only.
 
 ## `workspace/` — env schemas
 Schemas are the **union** of `reference.governance_schemas` + `serving_schemas`; `source_schemas`

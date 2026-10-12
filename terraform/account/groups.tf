@@ -1,7 +1,8 @@
-# Account groups from config/account/groups.yaml (a list of { name, external_id }).
+# Account groups from config/reference/<env>.yaml `groups` (a list of { name, external_id }).
 #
-# Groups are ACCOUNT assets, shared by every workspace / env, so this root is not per-env: it reads
-# the account inventory, not config/reference/<env>.yaml (which lists only the names an env uses).
+# The groups are account-level objects, so this root uses the ACCOUNT-level provider (account
+# admin). The CLI provisioner (`python -m framework.provision.cli groups`) does the same through
+# the workspace proxy API with no account access — prefer it when account access isn't available.
 #
 # Each group's external_id picks how it is provisioned:
 #   set   (AIM)    resolved from Microsoft Entra ID by its external_id (the Entra Object ID).
@@ -15,10 +16,10 @@ provider "databricks" {
 }
 
 locals {
-  account = yamldecode(file("${path.module}/../../config/account/groups.yaml"))
+  reference = yamldecode(file("${path.module}/../../config/reference/${var.env}.yaml"))
 
   # group name -> external_id (Entra Object ID, or null for a local group).
-  groups        = { for g in try(local.account.groups, []) : g.name => try(g.external_id, null) }
+  groups        = { for g in try(local.reference.groups, []) : g.name => try(g.external_id, null) }
   linked_groups = { for name, ext in local.groups : name => ext if ext != null }
   local_groups  = toset([for name, ext in local.groups : name if ext == null])
 }
@@ -29,7 +30,7 @@ data "databricks_current_config" "account" {}
 # 1 Groups WITH an external_id: resolve + provision by Entra Object ID (IAM v2 external-group API,
 #   Beta). NOTE this is a DATA source with a side effect — reading it provisions the group, so it
 #   happens at `plan`, and `terraform destroy` never removes it. The postcondition fails closed if
-#   the resolved Entra group's name differs from the inventory name (catches a mistyped GUID).
+#   the resolved Entra group's name differs from the reference name (catches a mistyped GUID).
 data "databricks_account_iam_external_group_v2" "this" {
   for_each = local.linked_groups
   name     = "accounts/${data.databricks_current_config.account.account_id}/external-groups/${each.value}"
@@ -37,7 +38,7 @@ data "databricks_account_iam_external_group_v2" "this" {
   lifecycle {
     postcondition {
       condition     = self.display_name == each.key
-      error_message = "external_id for '${each.key}' resolves to Entra group '${self.display_name}' — the GUID or the name in config/account/groups.yaml is wrong."
+      error_message = "external_id for '${each.key}' resolves to Entra group '${self.display_name}' — the GUID or the name in config/reference/${var.env}.yaml is wrong."
     }
   }
 }

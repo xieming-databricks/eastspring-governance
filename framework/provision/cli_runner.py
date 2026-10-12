@@ -1,7 +1,9 @@
 """Read live state and execute provisioning ``Action``s through the ``databricks`` CLI.
 
-Every call is ``databricks <argv> -o json [--profile P]`` in a subprocess. ``execute`` keeps
-going when one action fails (continue-and-report, as in ``framework.apply.executor``).
+Every call is ``databricks <argv> -o json [--profile P]`` in a subprocess, always with a WORKSPACE
+profile — groups go through the workspace-level IAM v2 proxy API, so no account-level access is
+needed. ``execute`` keeps going when one action fails (continue-and-report, as in
+``framework.apply.executor``).
 """
 from __future__ import annotations
 
@@ -27,8 +29,9 @@ def run(argv: tuple[str, ...] | list[str], profile: str | None = None) -> Any:
 
 
 def list_account_groups(profile: str | None = None) -> list[dict[str, Any]]:
-    """All account groups (id / displayName / externalId)."""
-    return run(("account", "groups", "list", "--attributes", "id,displayName,externalId"), profile) or []
+    """All groups in the account that parents the workspace (group_id / group_name / external_id),
+    via the workspace-level proxy API — a WORKSPACE profile, no account-level access needed."""
+    return run(("workspace-iam-v2", "list-groups-proxy"), profile) or []
 
 
 def list_schemas(catalog: str, profile: str | None = None) -> set[str]:
@@ -38,8 +41,11 @@ def list_schemas(catalog: str, profile: str | None = None) -> set[str]:
 
 
 def _resolved_name(resp: Any) -> str | None:
-    # resolve-group returns {"group": {...}}; the name field is group_name (display_name tolerated).
-    group = (resp.get("group") if isinstance(resp, dict) else None) or {}
+    # resolve-group-proxy is expected to return {"group": {...}} like the account-level resolve; a
+    # bare group object is tolerated too (neither shape is confirmed against a live AIM call yet).
+    if not isinstance(resp, dict):
+        return None
+    group = resp.get("group") if isinstance(resp.get("group"), dict) else resp
     return group.get("group_name") or group.get("display_name")
 
 
