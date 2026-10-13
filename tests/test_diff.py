@@ -34,6 +34,12 @@ def _keyset(df, *cols):
 # ---- grants: full-sync + protected set ----------------------------------
 
 def test_grants_full_sync_removes_any_unprotected_principal(spark):
+    """Grant full-sync adds missing target grants and revokes every undeclared live grant, whichever
+    principal holds it.
+
+    Expected: ADD c.s.t, REMOVE c.s.old (the managed group's stale grant) and REMOVE c.s.x (another
+    principal's grant).
+    """
     target = spark.createDataFrame([("grp", "SELECT", "table", "c.s.t")], _GRANT)
     live = spark.createDataFrame([
         ("grp", "SELECT", "table", "c.s.old"),     # managed group, not in target -> REMOVE
@@ -45,6 +51,11 @@ def test_grants_full_sync_removes_any_unprotected_principal(spark):
 
 
 def test_grants_protected_principal_and_schema(spark):
+    """Live grants held by a protected principal or sitting in a protected schema are never proposed
+    for removal.
+
+    Expected: the only REMOVE is c.s.b; dep@x's grant and the information_schema grant are kept.
+    """
     target = spark.createDataFrame([("grp", "SELECT", "table", "c.s.t")], _GRANT)
     live = spark.createDataFrame([
         ("dep@x", "SELECT", "table", "c.s.a"),                 # protected principal
@@ -58,6 +69,10 @@ def test_grants_protected_principal_and_schema(spark):
 
 
 def test_grants_no_change_when_identical(spark):
+    """Identical target and live grants produce no delta.
+
+    Expected: an empty delta (0 rows).
+    """
     row = [("grp", "SELECT", "table", "c.s.t")]
     out = diff.diff_grants(spark.createDataFrame(row, _GRANT), spark.createDataFrame(row, _GRANT))
     assert out.count() == 0
@@ -66,6 +81,13 @@ def test_grants_no_change_when_identical(spark):
 # ---- grants: managed scope (skip_base_grants) ----------------------------
 
 def test_grants_managed_schemas_leave_base_grants_alone(spark):
+    """With managed_schemas set (skip_base_grants), grants are full-synced only inside the serving
+    schema: base-schema grants are ignored on both sides and catalog-level grants are add-only.
+
+    Expected: exactly ADD viewers on c.serving, ADD viewers USE_CATALOG on c, and REMOVE stale on
+    c.serving.v; the admins' catalog grant and base-table grant are kept, and the admins' target
+    base grant is not added.
+    """
     # skip_base_grants: full-sync only inside the serving schema(s); base-table grants elsewhere
     # are neither added nor revoked, and catalog-level grants are add-only.
     target = spark.createDataFrame([
@@ -87,6 +109,12 @@ def test_grants_managed_schemas_leave_base_grants_alone(spark):
 
 
 def test_grants_managed_schemas_none_is_whole_catalog(spark):
+    """With managed_schemas None (base grants managed), the whole catalog is full-synced, so an
+    undeclared base-table grant is revoked.
+
+    Expected: the delta includes REMOVE c.gold.t, which shows the managed scope is what protects
+    base grants.
+    """
     # default (base grants managed): the same live base grant IS revoked — proves the scope matters.
     target = spark.createDataFrame([("viewers", "SELECT", "schema", "c.serving")], _GRANT)
     live = spark.createDataFrame([("admins", "MODIFY", "table", "c.gold.t")], _GRANT)
@@ -95,6 +123,12 @@ def test_grants_managed_schemas_none_is_whole_catalog(spark):
 
 
 def test_grants_managed_schemas_empty_only_adds_catalog_grants(spark):
+    """With managed_schemas empty (skip_base_grants and no serving schemas), nothing below catalog
+    level is managed and catalog grants are add-only.
+
+    Expected: only ADD c (the missing USE_CATALOG); the live table grant and the other catalog grant
+    are untouched.
+    """
     # skip_base_grants with no serving schemas: nothing below catalog level is managed.
     target = spark.createDataFrame([("viewers", "USE_CATALOG", "catalog", "c")], _GRANT)
     live = spark.createDataFrame([("x", "SELECT", "table", "c.any.t"),
@@ -104,6 +138,12 @@ def test_grants_managed_schemas_empty_only_adds_catalog_grants(spark):
 
 
 def test_diff_all_passes_managed_scope_to_grants_only(spark):
+    """diff_all applies managed_grant_schemas to the grant diff only; tags keep the whole-catalog
+    scope.
+
+    Expected: no grant delta (the base-table grant is untouched) while the undeclared acm_ column
+    tag on the base table is still REMOVEd.
+    """
     empty_g = spark.createDataFrame([], _GRANT)
     live_g = spark.createDataFrame([("admins", "MODIFY", "table", "c.gold.t")], _GRANT)
     tags = spark.createDataFrame([], _TAG)
@@ -119,6 +159,12 @@ def test_diff_all_passes_managed_scope_to_grants_only(spark):
 # ---- tags: ADD / REMOVE / CHANGE, acm_ only -----------------------------
 
 def test_tags_add_remove_change(spark):
+    """The tag diff adds, changes and removes acm_-prefixed tags and ignores tags outside that
+    namespace.
+
+    Expected: ADD acm_pii_type, CHANGE acm_business_function and REMOVE acm_rls; the non-acm
+    cost_center tag never appears.
+    """
     target = spark.createDataFrame([
         ("table", "c.s.t", "acm_business_function", "investments"),
         ("column", "c.s.t.col", "acm_pii_type", "FULL_NAME"),
@@ -138,6 +184,12 @@ def test_tags_add_remove_change(spark):
 # ---- policies: CHANGE on function, acm_policy_ only ---------------------
 
 def test_policies_change_and_namespace(spark):
+    """A mask policy whose function or EXCEPT list differs from live is a CHANGE, and policies
+    outside the acm_policy_ namespace are ignored.
+
+    Expected: exactly CHANGE acm_policy_mask_x__h1 (function) and CHANGE acm_policy_mask_y__h2
+    (EXCEPT list); someones_policy is untouched.
+    """
     target = spark.createDataFrame([
         ("c.s", "acm_policy_mask_x__h1", "column_mask", "c.g.new_fn", "etl-a"),   # fn CHANGE
         ("c.s", "acm_policy_mask_y__h2", "column_mask", "c.g.fn", "etl-a,etl-b"), # EXCEPT CHANGE
@@ -154,6 +206,10 @@ def test_policies_change_and_namespace(spark):
 # ---- diff_all: out-of-catalog target rows ignored -----------------------
 
 def test_diff_all_ignores_out_of_catalog_target(spark):
+    """Target grants outside target_catalog are dropped from the diff.
+
+    Expected: only asset_prod.gold.t appears in the grant delta; other_cat.gold.t is ignored.
+    """
     target = {
         "grants": spark.createDataFrame([
             ("grp", "SELECT", "table", "asset_prod.gold.t"),

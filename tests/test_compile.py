@@ -19,6 +19,11 @@ def S(privs):
 # ---- bundle expansion ---------------------------------------------------
 
 def test_read_table_traversal_and_select():
+    """The READ bundle on a table grants the traversal privileges on its catalog and schema plus
+    SELECT on the table.
+
+    Expected: exactly USE_CATALOG on a, USE_SCHEMA on a.b and SELECT on table a.b.c.
+    """
     assert S(expand_bundle("READ", "table", "a.b.c")) == {
         ("USE_CATALOG", "catalog", "a"),
         ("USE_SCHEMA", "schema", "a.b"),
@@ -27,6 +32,11 @@ def test_read_table_traversal_and_select():
 
 
 def test_read_view_grants_like_table():
+    """The READ bundle on a view expands the same way as on a table (UC grants views as tables).
+
+    Expected: exactly USE_CATALOG on a, USE_SCHEMA on a.b and SELECT on a.b.v as securable type
+    table.
+    """
     assert S(expand_bundle("READ", "view", "a.b.v")) == {
         ("USE_CATALOG", "catalog", "a"),
         ("USE_SCHEMA", "schema", "a.b"),
@@ -35,6 +45,11 @@ def test_read_view_grants_like_table():
 
 
 def test_read_catalog_inherits_use_schema():
+    """The READ bundle on a whole catalog grants catalog-level USE_CATALOG, USE_SCHEMA and SELECT,
+    which every schema and table inherits.
+
+    Expected: exactly USE_CATALOG, USE_SCHEMA and SELECT, all on catalog a.
+    """
     assert S(expand_bundle("READ", "catalog", "a")) == {
         ("USE_CATALOG", "catalog", "a"),
         ("USE_SCHEMA", "catalog", "a"),
@@ -43,17 +58,29 @@ def test_read_catalog_inherits_use_schema():
 
 
 def test_read_function_and_volume():
+    """The READ bundle maps to the right leaf privilege for functions and volumes.
+
+    Expected: EXECUTE on function a.b.f and READ_VOLUME on volume a.b.vol.
+    """
     assert ("EXECUTE", "function", "a.b.f") in expand_bundle("READ", "function", "a.b.f")
     assert ("READ_VOLUME", "volume", "a.b.vol") in expand_bundle("READ", "volume", "a.b.vol")
 
 
 def test_write_table_adds_modify():
+    """The WRITE bundle on a table grants MODIFY in addition to READ's SELECT.
+
+    Expected: both SELECT and MODIFY on table a.b.c.
+    """
     got = S(expand_bundle("WRITE", "table", "a.b.c"))
     assert ("SELECT", "table", "a.b.c") in got
     assert ("MODIFY", "table", "a.b.c") in got
 
 
 def test_owner_schema_create_privileges():
+    """The OWNER bundle on a schema includes the create privileges.
+
+    Expected: CREATE_TABLE, CREATE_FUNCTION and CREATE_VOLUME on schema a.b are all present.
+    """
     got = S(expand_bundle("OWNER", "schema", "a.b"))
     assert {("CREATE_TABLE", "schema", "a.b"),
             ("CREATE_FUNCTION", "schema", "a.b"),
@@ -61,12 +88,21 @@ def test_owner_schema_create_privileges():
 
 
 def test_admin_catalog_manage():
+    """The ADMIN bundle on a catalog includes MANAGE.
+
+    Expected: MANAGE on catalog a.
+    """
     assert ("MANAGE", "catalog", "a") in expand_bundle("ADMIN", "catalog", "a")
 
 
 @pytest.mark.parametrize("bundle,obj", [("WRITE", "function"), ("WRITE", "volume"),
                                         ("OWNER", "table"), ("OWNER", "catalog")])
 def test_unsupported_combo_raises(bundle, obj):
+    """For each bundle/object combination with no defined meaning (WRITE on a function or volume;
+    OWNER on a table or catalog), expansion refuses it.
+
+    Expected: BundleError is raised for every combination.
+    """
     with pytest.raises(BundleError):
         expand_bundle(bundle, obj, "a.b.c")
 
@@ -83,6 +119,11 @@ def _cfg(grant_rules, labels=None, tags=None):
 
 
 def test_match_selects_labeled_objects_only():
+    """A label-match rule selects only securables of the requested object type whose labels match.
+
+    Expected: SELECT is granted on c.s.t1 only; c.s.t2 (other label value) and view c.s.v1 (type not
+    requested) get nothing.
+    """
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
@@ -102,7 +143,11 @@ def test_match_selects_labeled_objects_only():
 
 
 def test_labels_are_not_materialized_as_tags():
-    """Labels drive grant selection but must NEVER appear in the target tag state."""
+    """Labels drive grant selection but never become target tags.
+
+    Expected: SELECT is granted on c.s.t1, and the only target tag is the acm_pii_type column tag on
+    c.s.t1.name; no business_function tag appears.
+    """
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
@@ -120,7 +165,11 @@ def test_labels_are_not_materialized_as_tags():
 
 
 def test_data_product_label_selection():
-    """data_product is a valid label key (free-string value); grant selects by it, hyphenated catalog ok."""
+    """A rule can select securables by their data_product label, including in a hyphenated catalog.
+
+    Expected: SELECT is granted only on hera-dev.gold.esg_waci (data_product investment_esg), not on
+    the market_data table.
+    """
     docs = _cfg(
         grant_rules=[{
             "groups": ["hera-all-esg-read-unmasked"], "bundle": "READ",
@@ -139,6 +188,10 @@ def test_data_product_label_selection():
 
 
 def test_include_and_exclude():
+    """A rule's include adds an extra securable and its exclude removes one the label match picked.
+
+    Expected: grants on function c.s.f (included) and none on table c.s.t1, even though it matched.
+    """
     docs = _cfg(
         grant_rules=[{
             "groups": ["g"], "bundle": "READ",
@@ -155,6 +208,10 @@ def test_include_and_exclude():
 
 
 def test_dedup_across_groups_and_rules():
+    """Grants from identical rules are de-duplicated.
+
+    Expected: the grant list has no duplicates.
+    """
     rule = {"groups": ["g"], "bundle": "READ",
             "match": {"object_types": ["table"], "labels": {"business_function": "investments"}}}
     docs = _cfg(
@@ -166,6 +223,11 @@ def test_dedup_across_groups_and_rules():
 
 
 def test_compile_error_surfaces_for_bad_bundle_object():
+    """An unsupported bundle/object pair in a rule (WRITE on a function) becomes a compile error
+    instead of crashing.
+
+    Expected: state.ok is False and state.errors is non-empty.
+    """
     docs = _cfg(
         grant_rules=[{"groups": ["g"], "bundle": "WRITE",
                       "include": [{"type": "function", "name": "c.s.f"}]}],
@@ -177,6 +239,12 @@ def test_compile_error_surfaces_for_bad_bundle_object():
 # ---- column-mask policy target definition (for CREATE OR REPLACE DDL) ---
 
 def test_column_mask_policy_carries_definition_and_exempt():
+    """A column-mask policy carries its column-tag match and the mask-exempt principals for its
+    EXCEPT clause.
+
+    Expected: one policy matching acm_pii_type FULL_NAME, with no table tag match, and
+    except_principals "hera-etl-a,hera-etl-b" (sorted, blank dropped).
+    """
     docs = {"policies": {"schema_version": "1.0", "column_mask_policies": [
         {"scope": "hera-dev.gold", "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
          "function": "hera-dev.governance.acm_mask_full_name"}]}}
@@ -191,6 +259,11 @@ def test_column_mask_policy_carries_definition_and_exempt():
 # ---- compile the real config/esg ----------------------------------------
 
 def test_compile_config_esg():
+    """The shipped config/esg compiles end to end.
+
+    Expected: state.ok, with non-empty grants, tags, policies and refs, and every policy name
+    starting with acm_policy_.
+    """
     d = REPO / "config" / "esg"
     docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
             for k in ("base_grants", "rbac_view_grants", "rbac_views", "tags", "policies", "labels")
@@ -204,6 +277,12 @@ def test_compile_config_esg():
 # ---- skip_base_grants: base_grants.yaml rules are not compiled -------------
 
 def test_include_base_grants_false_compiles_only_view_grants():
+    """With include_base_grants False (skip_base_grants), base_grants.yaml rules are dropped and
+    only the view grants compile.
+
+    Expected: principals are {admins, viewers} normally but only {viewers} with base grants skipped;
+    the result is ok and still has USE_CATALOG on catalog c from the view grant.
+    """
     docs = _cfg([{"groups": ["admins"], "bundle": "READ",
                   "include": [{"type": "table", "name": "c.gold.t"}]}])
     docs["rbac_view_grants"] = {"schema_version": "1.0", "grant_rules": [

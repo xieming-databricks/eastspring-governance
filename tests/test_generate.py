@@ -50,6 +50,10 @@ def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=
 # ---- labels (Base Tables) -----------------------------------------------
 
 def test_labels_built_from_base_tables():
+    """Each Base Tables row becomes a table label carrying its data_product.
+
+    Expected: labels c.s.t1 to dp_a and c.s.t2 to dp_b, both of type table.
+    """
     entries = generate_config(_wb())["labels"]["labels"]
     assert {(e["securable"]["name"], e["labels"]["data_product"]) for e in entries} == {
         ("c.s.t1", "dp_a"), ("c.s.t2", "dp_b")}
@@ -57,6 +61,12 @@ def test_labels_built_from_base_tables():
 
 
 def test_target_schema_and_rls_column_not_yet_on_labels():
+    """Labels carry only the data_product; target_schema and rls_column go to the view definitions,
+    not onto labels.
+
+    Expected: every label entry has only securable and labels, and every labels map has only
+    data_product.
+    """
     # gaps 2/3 deferred to view generation: labels carry only data_product, no routing fields.
     entries = generate_config(_wb())["labels"]["labels"]
     assert all(set(e) == {"securable", "labels"} for e in entries)
@@ -66,6 +76,12 @@ def test_target_schema_and_rls_column_not_yet_on_labels():
 # ---- Base Grant Rules ---------------------------------------------------
 
 def test_base_grant_rule_shape():
+    """A Base Grant Rules row becomes one base_grants rule with its id, group, bundle and label
+    match.
+
+    Expected: a single rule GR1 granting ADMIN to g_admin, matching object types [table, view] with
+    data_product dp_a.
+    """
     base = generate_config(_wb())["base_grants"]["grant_rules"]
     assert len(base) == 1
     r = base[0]
@@ -77,6 +93,10 @@ def test_base_grant_rule_shape():
 # ---- Rbac Views -> serving-schema grants --------------------------------
 
 def test_rbac_views_emit_serving_schema_grants():
+    """A Rbac Views row becomes a serving-schema grant rule.
+
+    Expected: a single rule RBAC1 granting READ to g_read, including schema c.dm_x.
+    """
     serving = generate_config(_wb())["rbac_view_grants"]["grant_rules"]
     assert len(serving) == 1
     r = serving[0]
@@ -85,6 +105,12 @@ def test_rbac_views_emit_serving_schema_grants():
 
 
 def test_views_built_from_base_tables():
+    """Each Base Tables row with a target_schema becomes a dynamic view in that schema, carrying
+    rls_column only when one is set.
+
+    Expected: views c.dm_x.t1 (source c.s.t1, rls_column portfolio_code) and c.dm_x.t2 (source
+    c.s.t2, no rls_column, so no RLS).
+    """
     views = generate_config(_wb())["rbac_views"]["views"]
     by_view = {v["view"]: v for v in views}
     assert set(by_view) == {"c.dm_x.t1", "c.dm_x.t2"}
@@ -93,6 +119,12 @@ def test_views_built_from_base_tables():
 
 
 def test_tags_from_asset_classification():
+    """Asset Classification rows become column tags, using the workbook's acm_-prefixed tag key as-
+    is.
+
+    Expected: column c.s.t1.name tagged acm_pii_type FULL_NAME, and c.s.t1.email tagged acm_pii_type
+    EMAIL.
+    """
     # tag_key is already acm_-namespaced in the workbook and used verbatim (no key translation).
     ac = [
         {"object": "c.s.t1.name", "tag_key": "acm_pii_type", "tag_value": "FULL_NAME"},
@@ -106,6 +138,12 @@ def test_tags_from_asset_classification():
 
 
 def test_column_masks_from_masking_rules():
+    """A Masking Rules row becomes a column-mask policy; the when_key/when_value table condition is
+    dropped.
+
+    Expected: exactly one policy with scope c.gold, column_matching_tags {acm_pii_type: FULL_NAME}
+    and function c.gov.acm_mask_full_name, with no table_matching_tags.
+    """
     mr = [{"attach": "c.gold", "when_key": "data_product", "when_value": "x",
            "match_columns_key": "acm_pii_type", "match_columns_value": "FULL_NAME",
            "function": "c.gov.acm_mask_full_name"}]
@@ -117,6 +155,12 @@ def test_column_masks_from_masking_rules():
 
 
 def test_exceptions_carry_exp_id():
+    """Base Grant Exceptions become include/exclude entries on their rule, each carrying its
+    exception id.
+
+    Expected: include [function c.s.f, exp_id EX1] and exclude [table c.s.t1, exp_id EX2] on rule
+    GR1.
+    """
     exceptions = [
         {"exception_id": "EX1", "rule_id": "GR1", "action": "include", "object_type": "function", "object": "c.s.f"},
         {"exception_id": "EX2", "rule_id": "GR1", "action": "exclude", "object_type": "table", "object": "c.s.t1"},
@@ -127,6 +171,10 @@ def test_exceptions_carry_exp_id():
 
 
 def test_output_validates_and_compiles():
+    """The generator's output for a valid workbook passes validation and compiles.
+
+    Expected: validate_docs(...).ok and compile_config(...).ok are both True.
+    """
     docs = generate_config(_wb())
     assert validate_docs(docs).ok
     assert compile_config(docs).ok
@@ -158,6 +206,12 @@ def test_output_validates_and_compiles():
          "function": "c.gov.acm_x"}), id="mask_bad_match_key"),
 ])
 def test_referential_violations_raise(mutate):
+    """For each broken workbook (unknown group, data product or bundle; bad object type; orphan
+    exception; Rbac Views with an unknown group, bad bundle or missing schema; duplicate view
+    target; bad or un-prefixed tag key; bad mask match key), generation refuses the workbook.
+
+    Expected: GeneratorError is raised for every case.
+    """
     wb = _wb()
     mutate(wb)
     with pytest.raises(GeneratorError):
@@ -168,6 +222,14 @@ def test_referential_violations_raise(mutate):
 
 @pytest.mark.skipif(not WORKBOOK.exists(), reason="v3 workbook not present")
 def test_real_v3_workbook_generates_valid_config():
+    """The signed-off v3 Access Matrix workbook generates a valid, compilable config with the
+    expected counts (skipped if the workbook is absent).
+
+    Expected: valid and compilable; 10 labels, 7 base rules, 5 serving rules all on hera-dev.dm_esg,
+    11 views (including dm_something.fact_portfolio_position, with RLS on
+    dm_esg.fact_portfolio_position), 7 acm_pii_type column tags, and 4 mask policies using acm_
+    functions with no table_matching_tags.
+    """
     wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
     docs = generate_config(wb)                       # raises if invalid
     assert validate_docs(docs).ok

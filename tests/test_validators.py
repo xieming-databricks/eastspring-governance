@@ -64,6 +64,11 @@ def _baseline() -> tuple[dict, dict, dict, dict]:
 # ---- valid baseline ------------------------------------------------------
 
 def test_baseline_valid(tmp_path):
+    """The minimal in-code baseline config (a grant rule, a column mask, a column tag and a label)
+    is valid.
+
+    Expected: validate_dir reports no issues (result.ok is True).
+    """
     cfg = _write_config(tmp_path, *_baseline())
     result = validate_dir(cfg)
     assert result.ok, "reported issues on the valid baseline:\n" + "\n".join(
@@ -147,6 +152,13 @@ CORRUPTIONS = {
 
 @pytest.mark.parametrize("name", CORRUPTIONS)
 def test_corruption_caught(tmp_path, name):
+    """For each corruption in CORRUPTIONS (bad bundle, unknown field, rule with no match or include,
+    include/exclude overlap, illegal label grain, bad FQN, mask function without acm_,
+    business_function used as a tag, duplicate securables, wrong schema_version, unknown tag or
+    label key, label on a column), validation catches the broken config.
+
+    Expected: result.ok is False for every corruption.
+    """
     g, p, t, l = _baseline()
     CORRUPTIONS[name](g, p, t, l)
     cfg = _write_config(tmp_path, g, p, t, l)
@@ -155,13 +167,20 @@ def test_corruption_caught(tmp_path, name):
 
 
 def test_missing_file(tmp_path):
+    """Validating an empty directory reports the required files as missing.
+
+    Expected: result.ok is False with a "file not found" issue.
+    """
     result = validate_dir(tmp_path)   # empty dir
     assert not result.ok
     assert any("file not found" in i.message for i in result.issues)
 
 
 def test_data_product_label_validates(tmp_path):
-    """business_function and data_product are both valid label keys; values are free strings."""
+    """data_product is an accepted label key alongside business_function, with a free-string value.
+
+    Expected: the baseline plus a data_product label still validates (result.ok is True).
+    """
     g, p, t, l = _baseline()
     l["labels"].append({
         "securable": {"type": "table", "name": "testcat.gold.esg_waci"},
@@ -172,7 +191,10 @@ def test_data_product_label_validates(tmp_path):
 
 
 def test_labels_required(tmp_path):
-    """labels.yaml is mandatory: an otherwise-valid config without it fails validation."""
+    """labels.yaml is a required file: an otherwise-valid config without it fails.
+
+    Expected: result.ok is False with a "file not found" issue for labels.yaml.
+    """
     g, p, t, _l = _baseline()
     (tmp_path / "grants.yaml").write_text(yaml.safe_dump(g, sort_keys=False))
     (tmp_path / "policies.yaml").write_text(yaml.safe_dump(p, sort_keys=False))
@@ -197,6 +219,12 @@ _REFERENCE = {
 
 
 def test_check_reference_flags_offlist_vocabulary():
+    """The reference check warns about vocabulary that isn't on the allow-list: an unknown group,
+    schema, tag value and tag key.
+
+    Expected: only reference-layer warnings, naming ghost-group, testcat.rogue, SSN and made_up_key;
+    the value under the unknown key is not warned about separately.
+    """
     docs = {
         "base_grants": {"grant_rules": [
             {"groups": ["ghost-group"], "bundle": "READ",
@@ -219,6 +247,11 @@ def test_check_reference_flags_offlist_vocabulary():
 
 
 def test_check_reference_flags_offlist_data_product():
+    """A data_product not on the allow-list is warned about, whether used in a grant match or a
+    label.
+
+    Expected: a warning for data_product rogue_dp and none for the listed approved_dp.
+    """
     # data_product is read from both grant match.labels and labels.yaml; off-list -> warning.
     docs = {
         "base_grants": {"grant_rules": [
@@ -236,6 +269,11 @@ def test_check_reference_flags_offlist_data_product():
 
 
 def test_check_reference_checks_mask_routing_value():
+    """The acm_pii_type value a mask policy routes on is checked against the allow-list too.
+
+    Expected: a warning for tag value SSN for key acm_pii_type; no issues once the value is changed
+    to the listed FULL_NAME.
+    """
     # a column-mask policy's acm_pii_type routing value is governed vocabulary too.
     docs = {"policies": {"column_mask_policies": [
         {"scope": "testcat.approved", "column_matching_tags": {"acm_pii_type": "SSN"},
@@ -248,6 +286,10 @@ def test_check_reference_checks_mask_routing_value():
 
 
 def test_check_reference_clean_when_all_listed():
+    """A config that uses only allow-listed groups, schemas and tags passes the reference check.
+
+    Expected: no issues.
+    """
     docs = {
         "base_grants": {"grant_rules": [
             {"groups": ["ok-group"], "bundle": "READ",
@@ -260,6 +302,11 @@ def test_check_reference_clean_when_all_listed():
 
 
 def test_check_reference_flags_malformed_external_id():
+    """A group's external_id must look like an Entra Object ID (GUID); a valid GUID and null both
+    pass.
+
+    Expected: exactly one warning, at groups/2/external_id, saying the value "is not a GUID".
+    """
     # a group's external_id must look like an Entra Object ID (GUID); null (local group) is fine.
     ref = {"groups": [
         {"name": "ok-group",   "external_id": "0f8fad5b-d9cb-469f-a165-70867728950e"},   # valid GUID
@@ -271,6 +318,11 @@ def test_check_reference_flags_malformed_external_id():
 
 
 def test_check_reference_flags_duplicate_or_unnamed_group():
+    """The reference check catches a group listed twice and a group entry without a name.
+
+    Expected: exactly two messages: groups/1/name "group 'g1' is listed more than once" and groups/2
+    "group entry has no name".
+    """
     # a list can't enforce unique names the way a map would, so the reference layer does.
     ref = {"groups": [{"name": "g1", "external_id": None},
                       {"name": "g1", "external_id": None},        # duplicate
@@ -281,6 +333,11 @@ def test_check_reference_flags_duplicate_or_unnamed_group():
 
 
 def test_absent_reference_dimension_is_skipped():
+    """A dimension missing from the reference (here groups) counts as not curated, so its use isn't
+    checked.
+
+    Expected: no issues, even though ghost-group is used.
+    """
     # 'groups' key absent => group vocabulary is "not curated" => no group warnings.
     ref = {"source_schemas": ["testcat.approved"]}
     docs = {"base_grants": {"grant_rules": [{"groups": ["ghost-group"], "bundle": "READ"}]}}
@@ -288,6 +345,12 @@ def test_absent_reference_dimension_is_skipped():
 
 
 def test_check_reference_view_target_must_be_serving():
+    """A dynamic view's destination schema must be a declared serving schema, while its source only
+    needs to be an approved schema.
+
+    Expected: a warning that view target schema testcat.approved is not a declared serving_schema,
+    and nothing about the real serving schema testcat.serving.
+    """
     # a dynamic view's destination schema must be a declared serving_schema; the base source is a
     # normal approved-schema reference (union of source/serving/governance).
     docs = {"rbac_views": {"views": [
@@ -299,7 +362,10 @@ def test_check_reference_view_target_must_be_serving():
 
 
 def test_warnings_do_not_fail_validation():
-    """A schema-valid config that references off-list vocabulary warns but stays ok."""
+    """Reference warnings never make an otherwise schema-valid config fail.
+
+    Expected: result.ok is True and there are no errors, but warnings are reported.
+    """
     g, p, t, l = _baseline()
     docs = {"base_grants.yaml": g, "policies.yaml": p, "tags.yaml": t, "labels.yaml": l}
     result = validate_docs(docs, reference={"groups": []})   # nothing approved -> warns on every group
@@ -309,6 +375,12 @@ def test_warnings_do_not_fail_validation():
 
 
 def test_validate_dir_autoloads_sibling_reference(tmp_path):
+    """validate_dir finds config/reference/<dir>.yaml next to the config dir automatically; passing
+    reference={} turns the check off.
+
+    Expected: the config stays valid with a warning about ghost-group, and no warnings at all with
+    reference={}.
+    """
     cfg = tmp_path / "esg"
     cfg.mkdir()
     g, p, t, l = _baseline()
@@ -327,7 +399,10 @@ def test_validate_dir_autoloads_sibling_reference(tmp_path):
 
 
 def test_esg_config_has_no_reference_warnings():
-    """The shipped config/esg must be clean against its own reference allow-list."""
+    """The shipped config/esg is clean against its own reference allow-list.
+
+    Expected: result.ok is True and there are no warnings.
+    """
     result = validate_dir(REPO / "config" / "esg")
     assert result.ok
     assert result.warnings == []
@@ -336,6 +411,11 @@ def test_esg_config_has_no_reference_warnings():
 # ---- verbose 'what was checked' trace -----------------------------------
 
 def test_checks_recorded_for_clean_config():
+    """Verbose mode records each check performed on config/esg with its status.
+
+    Expected: base_grants.yaml ok with a grant_rules count, rbac_views.yaml ok, schema_version ok,
+    and reference ok.
+    """
     by_target = {c.target: c for c in validate_dir(REPO / "config" / "esg").checks}
     assert by_target["base_grants.yaml"].status == "ok"
     assert "grant_rules=" in by_target["base_grants.yaml"].detail   # item counts surfaced
@@ -345,6 +425,10 @@ def test_checks_recorded_for_clean_config():
 
 
 def test_checks_note_absent_optional(tmp_path):
+    """An optional file that is absent is recorded as skipped, not as an error.
+
+    Expected: rbac_view_grants.yaml and rbac_views.yaml both have status skipped.
+    """
     # an optional file that is absent is recorded as skipped (not an error)
     cfg = _write_config(tmp_path, *_baseline())   # base-only: no rbac_view_grants/rbac_views
     by_target = {c.target: c for c in validate_dir(cfg).checks}
@@ -353,6 +437,12 @@ def test_checks_note_absent_optional(tmp_path):
 
 
 def test_checks_mark_issues_and_missing(tmp_path):
+    """The check list marks a file with schema problems as issues and a missing required file as
+    missing, while other files stay ok.
+
+    Expected: base_grants.yaml issues and tags.yaml ok in the broken config; base_grants.yaml
+    missing for a non-existent directory.
+    """
     g, p, t, l = _baseline()
     g["grant_rules"][0]["bundle"] = "SUPERUSER"                    # schema violation in base_grants
     cfg = _write_config(tmp_path, g, p, t, l)
@@ -365,6 +455,10 @@ def test_checks_mark_issues_and_missing(tmp_path):
 
 
 def test_reference_check_status_is_warnings_when_offlist(tmp_path):
+    """The reference entry in the check list shows warnings when the config uses an off-list group.
+
+    Expected: the reference check's status is warnings.
+    """
     cfg = tmp_path / "esg"
     cfg.mkdir()
     g, p, t, l = _baseline()
@@ -378,6 +472,11 @@ def test_reference_check_status_is_warnings_when_offlist(tmp_path):
 
 
 def test_cli_verbose_lists_checks(capsys):
+    """The validation CLI's --verbose flag lists every check it performed.
+
+    Expected: exit code 0, and the output contains "checked", "vs grants.schema.yaml" and
+    "reference:".
+    """
     from eastspring_uc_governance.validation.cli import main
     rc = main([str(REPO / "config" / "esg"), "--verbose"])
     out = capsys.readouterr().out
@@ -388,6 +487,11 @@ def test_cli_verbose_lists_checks(capsys):
 
 
 def test_skip_base_grants_must_be_boolean():
+    """skip_base_grants must be a real boolean, since a quoted "true" would silently not skip.
+
+    Expected: no issues for True or False; for "true", exactly the warning "skip_base_grants must be
+    true or false, got 'true' (treated as false)".
+    """
     for ok in (True, False):
         assert check_reference({}, {"skip_base_grants": ok}) == []
     msgs = [i.message for i in check_reference({}, {"skip_base_grants": "true"})]
