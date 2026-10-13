@@ -27,7 +27,8 @@ for base-only configs).
 ## Schema versioning
 
 - The three generated YAML files conform to versioned [JSON Schema 2020-12] schemas
-  delivered with the framework under `schemas/config/v1/`.
+  delivered inside the `eastspring-uc-governance` package under
+  `eastspring_uc_governance/schemas/config/v1/` (shipped in the wheel).
 - Each parsed YAML file is validated before compilation using Python's `jsonschema` library.
 - Each file carries the same `schema_version`; unknown fields and unsupported versions fail
   validation.

@@ -1,8 +1,8 @@
 """Tests for the preflight existence check."""
 from __future__ import annotations
 
-from framework.compile.model import RefObject
-from framework.reconcile import preflight
+from eastspring_uc_governance.compile.model import RefObject
+from eastspring_uc_governance.reconcile import preflight
 
 
 def test_missing_object_and_function_warn():

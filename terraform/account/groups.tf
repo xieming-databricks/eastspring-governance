@@ -1,7 +1,7 @@
 # Account groups from config/reference/<env>.yaml `groups` (a list of { name, external_id }).
 #
 # The groups are account-level objects, so this root uses the ACCOUNT-level provider (account
-# admin). The CLI provisioner (`python -m framework.provision.cli groups`) does the same through
+# admin). The CLI provisioner (`ucgov-provision groups`) does the same through
 # the workspace proxy API with no account access — prefer it when account access isn't available.
 #
 # Each group's external_id picks how it is provisioned:

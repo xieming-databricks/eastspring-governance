@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from framework.validation import validate_docs
+from eastspring_uc_governance.validation import validate_docs
 
 SCHEMA_VERSION = "1.0"
 KNOWN_BUNDLES = frozenset({"READ", "WRITE", "OWNER", "ADMIN"})

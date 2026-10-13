@@ -3,7 +3,7 @@
 Every call is ``databricks <argv> -o json [--profile P]`` in a subprocess, always with a WORKSPACE
 profile — groups go through the workspace-level IAM v2 proxy API, so no account-level access is
 needed. ``execute`` keeps going when one action fails (continue-and-report, as in
-``framework.apply.executor``).
+``eastspring_uc_governance.apply.executor``).
 """
 from __future__ import annotations
 

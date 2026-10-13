@@ -6,8 +6,8 @@ import subprocess
 
 import pytest
 
-from framework.provision import cli_runner, planner
-from framework.provision.planner import CONFLICT, CREATE, EXISTS, RESOLVE
+from eastspring_uc_governance.provision import cli_runner, planner
+from eastspring_uc_governance.provision.planner import CONFLICT, CREATE, EXISTS, RESOLVE
 
 GUID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 

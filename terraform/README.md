@@ -1,7 +1,7 @@
 # `terraform/` — provision account groups + env schemas, as two separate roots
 
 > **Primary path for DE teams: the Python + `databricks` CLI provisioner**
-> (`python -m framework.provision.cli groups|schemas`, see its `--help`). It reads the same YAML
+> (`ucgov-provision groups|schemas`, from the `eastspring-uc-governance` wheel — see its `--help`). It reads the same YAML
 > with the same split. This Terraform is kept as an **alternative** for teams that use Terraform.
 > Two behavioural differences:
 > - **Access:** the CLI provisioner needs **no account-level access** — it reaches account groups
@@ -48,7 +48,7 @@ terraform apply -var env=esg
 ```
 - **Prereqs:** account-admin rights. For any group with an `external_id`, the account must be
   **onboarded to AIM** and the group must **already exist in Entra ID**.
-- **No account access?** Use the CLI provisioner instead (`framework.provision.cli groups`), which
+- **No account access?** Use the CLI provisioner instead (`eastspring_uc_governance.provision.cli groups`), which
   reaches the same account groups through the workspace proxy API with a workspace-admin profile.
 - **Groups shared by several envs:** each env lists the group in its own reference. With one
   Terraform state per env, two envs managing the same local group would both try to own it — use

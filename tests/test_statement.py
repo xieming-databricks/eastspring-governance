@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.apply import statement
+from eastspring_uc_governance.apply import statement
 
 
 def _g(change_type, principal, priv, stype, fqn):

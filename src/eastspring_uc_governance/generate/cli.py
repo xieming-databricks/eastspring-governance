@@ -1,6 +1,6 @@
 """Generate framework config YAMLs from an Access-Matrix workbook.
 
-    python -m framework.generate.cli <workbook.xlsx> <out_dir> [--check]
+    python -m eastspring_uc_governance.generate.cli <workbook.xlsx> <out_dir> [--check]
 
 Reads the workbook, converts it (asset-level: labels + grants, with valid empty tag/policy
 stubs), self-validates, and writes the config directory. ``--check`` validates and prints a

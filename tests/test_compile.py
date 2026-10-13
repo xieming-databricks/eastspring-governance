@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from framework.compile import compile_config
-from framework.compile.bundles import BundleError, expand_bundle
+from eastspring_uc_governance.compile import compile_config
+from eastspring_uc_governance.compile.bundles import BundleError, expand_bundle
 
 REPO = Path(__file__).resolve().parents[1]
 

@@ -11,14 +11,27 @@ Each file holds **exactly one** idempotent `CREATE OR REPLACE …` statement. To
   objects on a SQL warehouse or serverless, not a classic cluster. (The two source tables are
   customer-owned; seed them for dev with `dev-tools/seed_esg_rls.sql`.)
 
-**Deploy:** the `notebooks/apply_functions.py` notebook applies every `sql/*.sql` here. CI/CD runs
-that notebook **only when files under `sql/**` change** (path-filtered trigger), so the live UDFs
-track git. `CREATE OR REPLACE` makes re-runs no-ops.
+**Packaged + templated:** these files ship **inside the `eastspring-uc-governance` wheel** and carry
+no deployment specifics. The catalog and governance schema are placeholders, filled in per env by
+`eastspring_uc_governance.sql_objects.render_sql_objects(reference)` from `config/reference/<env>.yaml`:
+
+| Placeholder | From the reference |
+|---|---|
+| `${catalog}` | `target_catalog` |
+| `${governance_schema}` | the one `governance_schemas` entry under `target_catalog` (bare name) |
+
+Rendering fails loudly on a missing value or an unknown placeholder. A literal `$` must be written `$$`.
+
+**Deploy:** the `notebooks/apply_functions.py` notebook installs the wheel (`%pip` from a UC Volume),
+renders every `sql/*.sql` for the env, and applies it. `CREATE OR REPLACE` makes re-runs no-ops.
 
 **Convention**
 - One statement per file (the applier runs each file as a single `spark.sql` call — no `;`-splitting).
-- Names fully qualified and backtick-quoted (`` `hera-dev` `` contains a hyphen).
-- The `governance` schema must already exist (seeded/Terraform).
+- Names fully qualified and backtick-quoted: `` `${catalog}`.`${governance_schema}`.<object> ``
+  (catalog names like `hera-dev` contain a hyphen).
+- The governance schema must already exist (`ucgov-provision schemas`, seed, or Terraform).
+- **Still env-specific:** the mask UDFs name the unmasked groups (`hera-all-esg-read-unmasked`,
+  `hera-all-admin-admin-unmasked`) literally — not yet a placeholder.
 
 **Masking model (confirm with governance):** the policy applies `TO account users EXCEPT <ETL>` —
 ETL/pipeline identities are exempted at the *policy* level (`mask_exempt_principals` in

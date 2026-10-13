@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from framework.validation import check_reference, validate_dir, validate_docs
+from eastspring_uc_governance.validation import check_reference, validate_dir, validate_docs
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -378,7 +378,7 @@ def test_reference_check_status_is_warnings_when_offlist(tmp_path):
 
 
 def test_cli_verbose_lists_checks(capsys):
-    from framework.validation.cli import main
+    from eastspring_uc_governance.validation.cli import main
     rc = main([str(REPO / "config" / "esg"), "--verbose"])
     out = capsys.readouterr().out
     assert rc == 0

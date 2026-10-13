@@ -1,7 +1,7 @@
 """Tests for the protected-set assembly (full-sync guardrail)."""
 from __future__ import annotations
 
-from framework.reconcile import scope
+from eastspring_uc_governance.reconcile import scope
 
 
 def test_protected_principals_unions_all_layers():

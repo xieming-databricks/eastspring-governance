@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("pyspark")
 
-from framework.reconcile import diff  # noqa: E402
+from eastspring_uc_governance.reconcile import diff  # noqa: E402
 
 
 @pytest.fixture(scope="module")

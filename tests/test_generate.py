@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from framework.compile import compile_config
-from framework.generate import generate_config, read_workbook
-from framework.generate.generator import GeneratorError, REQUIRED_SHEETS
-from framework.validation import validate_docs
+from eastspring_uc_governance.compile import compile_config
+from eastspring_uc_governance.generate import generate_config, read_workbook
+from eastspring_uc_governance.generate.generator import GeneratorError, REQUIRED_SHEETS
+from eastspring_uc_governance.validation import validate_docs
 
 REPO = Path(__file__).resolve().parents[1]
 WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"

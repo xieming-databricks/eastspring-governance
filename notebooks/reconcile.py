@@ -25,26 +25,31 @@
 # MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
 # MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
 # MAGIC POLICY` — requires **ABAC-capable compute**).
+# MAGIC
+# MAGIC **`wheel_path`:** the `eastspring-uc-governance` wheel on a UC Volume; installed below
+# MAGIC (`%pip`), so the notebook needs no repo checkout — only the config dir at `config_path`.
 
 # COMMAND ----------
 
+dbutils.widgets.text("wheel_path",
+                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.1.0-py3-none-any.whl")
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
 # Leave target_catalog blank to use the reference allow-list's `target_catalog` (the source of
 # truth); set it only to override the reference for an ad-hoc run.
 dbutils.widgets.text("target_catalog", "", "target catalog (optional override of reference allow-list)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
-import sys
-from pathlib import Path
+wheel_path = dbutils.widgets.get("wheel_path").strip()
 
-# Repo root = parent of notebooks/. Contains framework/, config/, schemas/ as siblings.
-NOTEBOOK_DIR = Path("/Workspace") / Path(
-    dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-).parent.relative_to("/")
-REPO_ROOT = NOTEBOOK_DIR.parent
-sys.path.insert(0, str(REPO_ROOT))
-print(f"[reconcile] repo_root={REPO_ROOT}")
+# COMMAND ----------
 
+# MAGIC %pip install "$wheel_path"
+
+# COMMAND ----------
+
+dbutils.library.restartPython()   # clears Python state — every later cell re-reads its widgets
+
+# COMMAND ----------
 
 def show(df):
     """display() in Databricks, .show() elsewhere."""
@@ -94,7 +99,7 @@ print(f"[reconcile] config_source={config_path} | "
 # COMMAND ----------
 
 # DBTITLE 1,Validate the config (fail-closed errors; fail-open reference warnings)
-from framework.validation import validate_docs
+from eastspring_uc_governance.validation import validate_docs
 
 # Passing the reference adds fail-open warnings for any group / catalog.schema / tag key+value
 # the config uses but the allow-list does not list. Warnings are reported, never block.
@@ -111,7 +116,7 @@ else:
 # COMMAND ----------
 
 # DBTITLE 1,Compile -> target state (grants / tags / policies + referenced objects)
-from framework.compile import compile_config
+from eastspring_uc_governance.compile import compile_config
 
 # mask_exempt_principals is stamped onto each column-mask policy's EXCEPT clause (target state),
 # so an exempt-list change surfaces as a policy CHANGE in the diff.
@@ -127,7 +132,7 @@ print(f"[reconcile] target: {len(state.grants)} grants | {len(state.tags)} tags 
 # COMMAND ----------
 
 # DBTITLE 1,Target catalog + target-state DataFrames
-from framework.reconcile import frames, scope
+from eastspring_uc_governance.reconcile import frames, scope
 
 # Target catalog: reference allow-list is the source of truth; a non-empty widget overrides it
 # for ad-hoc runs.
@@ -156,7 +161,7 @@ for dim, df in target.items():
 # COMMAND ----------
 
 # DBTITLE 1,Read live state from information_schema (grants/tags/policies) — as DataFrames
-from framework.reconcile import live
+from eastspring_uc_governance.reconcile import live
 
 live_frames = {
     "grants": live.read_live_grants(spark, catalogs),
@@ -186,7 +191,7 @@ print(f"[reconcile] protected schemas={sorted(protected_schemas)}")
 # COMMAND ----------
 
 # DBTITLE 1,Diff in Spark -> per-dimension delta (ADD / REMOVE / CHANGE)
-from framework.reconcile import diff
+from eastspring_uc_governance.reconcile import diff
 
 delta_frames = diff.diff_all(target, live_frames,
                              target_catalog=target_catalog,
@@ -202,7 +207,7 @@ for dim, df in delta_frames.items():
 # COMMAND ----------
 
 # DBTITLE 1,Preflight -> warnings (referenced objects/functions that don't exist)
-from framework.reconcile import preflight
+from eastspring_uc_governance.reconcile import preflight
 
 warnings = preflight.check_existence(state.refs, existing)
 warn_df = frames.warnings_frame(spark, warnings)  # noqa: F821
@@ -219,11 +224,11 @@ show(warn_df)
 #
 # FUTURE WORK: this orchestration (live-view read + ensure/drop loop) lives in the notebook, unlike
 # grants/tags/policies which go through statement.plan_all + executor.apply. Move it into
-# framework/ (live.read_live_views + a plan_views planner run via executor) for consistency and
+# the eastspring_uc_governance package (live.read_live_views + a plan_views planner run via executor) for consistency and
 # unit-testability. Deferred by decision — ensure-all keeps it correct; this is a tidiness refactor.
 # Per-view drift *detection* (a stored (source, rls_column) contract / applied-state ledger) is also
 # deferred: ensure-all re-asserts every view each apply, so live always converges to desired.
-from framework.apply import statement as _stmt
+from eastspring_uc_governance.apply import statement as _stmt
 
 view_specs = {v["view"]: v for v in (docs.get("rbac_views") or {}).get("views", [])}
 expected_views = sorted(view_specs)
@@ -283,7 +288,7 @@ else:
 # DBTITLE 1,Apply -> execute the grant + tag + policy delta (GRANT/REVOKE / SET TAGS / CREATE OR REPLACE|DROP POLICY)
 # mode=plan (default) previews the SQL and runs nothing; mode=apply executes via spark.sql.
 # Column-mask policies are applied as ABAC DDL -> requires ABAC-capable compute.
-from framework.apply import statement, executor
+from eastspring_uc_governance.apply import statement, executor
 from dataclasses import asdict
 
 mode = dbutils.widgets.get("mode").strip()

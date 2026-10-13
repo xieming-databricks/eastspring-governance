@@ -1,11 +1,13 @@
 """Provision account groups + env schemas via the databricks CLI (the CLI alternative to terraform/).
 
-    python -m framework.provision.cli groups  --env esg --profile <workspace-profile>            # plan
-    python -m framework.provision.cli groups  --env esg --profile <workspace-profile> --apply    # execute
-    python -m framework.provision.cli schemas --env esg --profile <workspace-profile> [--apply]
+    ucgov-provision groups  --env esg --profile <workspace-profile>            # plan
+    ucgov-provision groups  --env esg --profile <workspace-profile> --apply    # execute
+    ucgov-provision schemas --env esg --profile <workspace-profile> [--apply]
 
-Both subcommands read config/reference/<env>.yaml and use a WORKSPACE profile — no account-level
-access is needed.
+(`ucgov-provision` is the installed entry point; `python -m eastspring_uc_governance.provision.cli`
+is equivalent.) Both subcommands read <config-root>/reference/<env>.yaml — --config-root defaults
+to ./config, i.e. run from the directory holding config/ — and use a WORKSPACE profile: no
+account-level access is needed.
 
 groups   the reference's `groups` ({name, external_id}). Account groups are reached through the
          workspace-level IAM v2 proxy API, which acts on the account that parents the workspace:
@@ -35,14 +37,13 @@ import yaml
 from ..validation import check_reference
 from . import cli_runner, planner
 
-REPO = Path(__file__).resolve().parents[2]
-
-
 def _reference(args: argparse.Namespace) -> tuple[dict[str, Any] | None, str]:
-    """Load config/reference/<env>.yaml (or --reference); returns (doc or None, display path)."""
-    path = Path(args.reference) if args.reference else REPO / "config" / "reference" / f"{args.env}.yaml"
-    resolved = path.resolve()
-    shown = str(resolved.relative_to(REPO)) if resolved.is_relative_to(REPO) else str(resolved)
+    """Load <config-root>/reference/<env>.yaml (or --reference); returns (doc or None, display path).
+    Config is per-deployment data, not part of the package, so it is resolved from the current
+    directory — never from where the package is installed."""
+    path = Path(args.reference) if args.reference else Path(args.config_root) / "reference" / f"{args.env}.yaml"
+    resolved, cwd = path.resolve(), Path.cwd().resolve()
+    shown = str(resolved.relative_to(cwd)) if resolved.is_relative_to(cwd) else str(resolved)
     if not path.exists():
         print(f"not found: {shown}")
         return None, shown
@@ -99,8 +100,10 @@ def _schemas(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--env", default="esg", help="selects config/reference/<env>.yaml (default: esg)")
-    common.add_argument("--reference", help="explicit path to the reference YAML (overrides --env)")
+    common.add_argument("--env", default="esg", help="selects <config-root>/reference/<env>.yaml (default: esg)")
+    common.add_argument("--config-root", default="config",
+                        help="directory holding reference/ (default: ./config, relative to the current dir)")
+    common.add_argument("--reference", help="explicit path to the reference YAML (overrides --env/--config-root)")
     common.add_argument("--profile", help="WORKSPACE-level CLI profile (default: CLI default)")
     common.add_argument("--apply", action="store_true", help="execute (default: plan only)")
 

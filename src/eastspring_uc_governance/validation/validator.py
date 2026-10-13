@@ -89,7 +89,8 @@ class ValidationResult:
 
 # ---- Paths / mappings ----------------------------------------------------
 
-_DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas" / "config" / "v1"
+# Shipped inside the package (package data), so it resolves the same from a checkout or a wheel.
+_DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas" / "config" / "v1"
 
 _FILE_SCHEMA = {
     "base_grants.yaml": "grants.schema.yaml",   # base-table grant rules (was grants.yaml)

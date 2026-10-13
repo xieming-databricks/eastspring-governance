@@ -1,9 +1,6 @@
-# Eastspring governance framework — dependencies
-jsonschema>=4.21     # JSON Schema Draft 2020-12 validation engine
-referencing>=0.33    # $ref resolution registry for jsonschema
-PyYAML>=6.0          # YAML loading (schemas + config) via safe_load
-openpyxl>=3.1        # read the Access-Matrix .xlsx in framework.generate
-pytest>=8.0          # test suite
+# Dependencies now live in pyproject.toml. For local development, install the package in editable
+# mode with the dev extra (this file is kept so `pip install -r requirements.txt` still works):
+-e .[dev]
 
 # pyspark is PROVIDED BY THE DATABRICKS RUNTIME — do NOT pip-install it on a cluster.
 # The reconcile modules (live/frames/diff) import it directly. For LOCAL testing only,

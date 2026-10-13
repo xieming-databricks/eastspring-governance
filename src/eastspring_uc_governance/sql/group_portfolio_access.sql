@@ -12,14 +12,14 @@
 -- requires SERVERLESS compute (a Pro/Serverless SQL warehouse, or serverless general compute on
 -- DBR 18.1+) — NOT a classic cluster; the source tables should have row tracking enabled for
 -- efficient incremental refresh. Axes are hardcoded region/team — a third dimension needs new SQL.
-CREATE OR REPLACE MATERIALIZED VIEW `hera-dev`.governance.group_portfolio_access
+CREATE OR REPLACE MATERIALIZED VIEW `${catalog}`.`${governance_schema}`.group_portfolio_access
 CLUSTER BY (portfolio_code)
 TRIGGER ON UPDATE
 AS
 WITH reach AS (                                    -- codes each group reaches, per axis
   SELECT e.ad_group, e.type, m.portfolio_code
-  FROM `hera-dev`.governance.entitlements e
-  JOIN `hera-dev`.governance.entitlement_mapping m
+  FROM `${catalog}`.`${governance_schema}`.entitlements e
+  JOIN `${catalog}`.`${governance_schema}`.entitlement_mapping m
     ON m.type = e.type AND (e.value = '*' OR m.value = e.value)
   WHERE e.tag = 'portfolio_scope'
 )

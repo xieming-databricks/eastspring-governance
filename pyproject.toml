@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eastspring-uc-governance"
+version = "0.1.0"
+description = "YAML-driven Unity Catalog governance: validate -> compile -> reconcile -> apply (grants, tags, ABAC column masks, dynamic RLS views) + CLI provisioning."
+readme = { text = "See the repository README / CONTRACT.md for the YAML contract.", content-type = "text/plain" }
+requires-python = ">=3.10"
+dependencies = [
+    "jsonschema>=4.21",   # JSON Schema Draft 2020-12 validation engine
+    "referencing>=0.33",  # $ref resolution registry for jsonschema
+    "PyYAML>=6.0",        # YAML loading (schemas + config) via safe_load
+    "openpyxl>=3.1",      # read the Access-Matrix .xlsx in eastspring_uc_governance.generate
+]
+# pyspark is deliberately NOT a dependency: the Databricks runtime provides it, and only the
+# reconcile / apply modules import it (lazily), so installing + importing the package never needs it.
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+ucgov-validate = "eastspring_uc_governance.validation.cli:main"
+ucgov-generate = "eastspring_uc_governance.generate.cli:main"
+ucgov-provision = "eastspring_uc_governance.provision.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# Shipped inside the wheel and read at runtime: the YAML contract the validator enforces, and the
+# templated SQL objects (mask UDFs, group_portfolio_access MV) apply_functions renders per env.
+eastspring_uc_governance = [
+    "schemas/config/v1/*.schema.yaml",
+    "schemas/config/v1/CONTRACT.md",
+    "sql/*.sql",
+    "sql/README.md",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

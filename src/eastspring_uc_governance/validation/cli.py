@@ -1,6 +1,6 @@
 """CLI for the Eastspring config validator.
 
-    python -m framework.validation.cli config/uat
+    python -m eastspring_uc_governance.validation.cli config/uat
 
 Exit code 0 when the config reports no issues, 1 otherwise — matching the
 design doc's "report through stdout/stderr and exit codes".
