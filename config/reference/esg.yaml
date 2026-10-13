@@ -26,6 +26,17 @@ protected_principals:
 
 protected_schemas: []
 
+# ---- skip_base_grants: don't manage base-table grants (base_grants.yaml) -----------------
+# false (default): base_grants.yaml + rbac_view_grants.yaml are both applied, and grant full-sync
+#                  covers the whole target_catalog (undeclared grants are REVOKEd).
+# true           : only the serving-schema (view) grants are managed. base_grants.yaml is NOT
+#                  applied, and grant full-sync is limited to serving_schemas — grants anywhere
+#                  else (base tables in source_schemas, governance) are left exactly as they are.
+#                  Catalog-level grants (USE CATALOG for the view groups) are still added, never
+#                  revoked. Tags and column-mask policies on the base tables are unaffected.
+# Must be a real boolean (true / false); anything else is treated as false and warned about.
+skip_base_grants: false
+
 # ---- masking: principals exempt from column masking (ETL / pipeline run-as) ------
 # Added to the EXCEPT clause of every column-mask policy so these read UNMASKED data (a masked
 # read materialized by a pipeline would persist masked values downstream). Use dedicated ETL

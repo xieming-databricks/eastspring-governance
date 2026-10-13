@@ -7,7 +7,8 @@ per dimension with a ``change_type`` column (ADD / REMOVE / CHANGE).
 
 Scope rules are applied as DataFrame filters before the join:
 
-  * grants  — full-sync within ``target_catalog``, minus protected principals/schemas.
+  * grants  — full-sync within ``target_catalog``, minus protected principals/schemas; with
+              ``skip_base_grants``, only within the serving schemas (catalog-level add-only).
   * tags    — ``acm_*`` keys only, minus protected schemas.
   * policies— ``acm_policy_*`` names only, minus protected schemas.
 
@@ -90,13 +91,25 @@ def _diff(target: DataFrame, live: DataFrame,
 
 def diff_grants(target: DataFrame, live: DataFrame, *, target_catalog: str | None = None,
                 protected_principals: Iterable[str] = (),
-                protected_schemas: Iterable[str] = ()) -> DataFrame:
+                protected_schemas: Iterable[str] = (),
+                managed_schemas: Iterable[str] | None = None) -> DataFrame:
+    """Grant delta. ``managed_schemas`` (bare names; None = the whole catalog) narrows full-sync to
+    those schemas — used when the deployment skips base grants. Grants in other schemas are then
+    ignored on BOTH sides (never added, never revoked), and catalog-level grants become add-only:
+    a missing catalog grant is still ADDed, but none is REMOVEd (the catalog isn't ours to clean)."""
     t = _scope(target, fqn_col="securable_fqn", target_catalog=target_catalog,
                protected_schemas=protected_schemas)
     l = _scope(live, fqn_col="securable_fqn", target_catalog=target_catalog,
                protected_schemas=protected_schemas, principal_col="principal",
                protected_principals=protected_principals)
-    return _diff(t, l, GRANT_KEYS, value_cols=[])
+    if managed_schemas is None:
+        return _diff(t, l, GRANT_KEYS, value_cols=[])
+
+    schemas = list(managed_schemas)
+    sch = _segment("securable_fqn", 2)
+    in_scope = sch.isNull() | (sch.isin(*schemas) if schemas else F.lit(False))   # NULL = catalog-level
+    delta = _diff(t.filter(in_scope), l.filter(in_scope), GRANT_KEYS, value_cols=[])
+    return delta.filter(~((F.col("change_type") == "REMOVE") & sch.isNull()))
 
 
 def diff_tags(target: DataFrame, live: DataFrame, *, target_catalog: str | None = None,
@@ -121,15 +134,18 @@ def diff_policies(target: DataFrame, live: DataFrame, *, target_catalog: str | N
 
 def diff_all(target_frames: dict[str, DataFrame], live_frames: dict[str, DataFrame], *,
              target_catalog: str, protected_principals: Iterable[str] = (),
-             protected_schemas: Iterable[str] = ()) -> dict[str, DataFrame]:
+             protected_schemas: Iterable[str] = (),
+             managed_grant_schemas: Iterable[str] | None = None) -> dict[str, DataFrame]:
     """Diff every dimension. ``target_frames`` / ``live_frames`` are dicts keyed
     ``grants`` / ``tags`` / ``policies`` (target from ``frames.target_frames``, live from
-    ``live.read_live_*``)."""
+    ``live.read_live_*``). ``managed_grant_schemas`` narrows the GRANT dimension only (see
+    ``diff_grants``); tags and policies keep the whole-catalog scope."""
     return {
         "grants": diff_grants(target_frames["grants"], live_frames["grants"],
                               target_catalog=target_catalog,
                               protected_principals=protected_principals,
-                              protected_schemas=protected_schemas),
+                              protected_schemas=protected_schemas,
+                              managed_schemas=managed_grant_schemas),
         "tags": diff_tags(target_frames["tags"], live_frames["tags"],
                           target_catalog=target_catalog, protected_schemas=protected_schemas),
         "policies": diff_policies(target_frames["policies"], live_frames["policies"],

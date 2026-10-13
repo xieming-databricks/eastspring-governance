@@ -103,3 +103,20 @@ def protected_schemas(*, extra: Iterable[str] | None = None) -> set[str]:
     """Schema names full-sync must never touch: :data:`SYSTEM_SCHEMAS` plus any
     ``protected_schemas`` from the reference allow-list."""
     return set(SYSTEM_SCHEMAS) | _clean(extra)
+
+
+# ---- managed grant scope (skip_base_grants) ------------------------------
+
+def managed_grant_schemas(reference: dict[str, Any] | None, target_catalog: str) -> list[str] | None:
+    """Bare schema names grant full-sync is limited to, or None for the whole catalog.
+
+    With ``skip_base_grants`` the framework manages only the serving-schema (view) grants, so the
+    grant diff is narrowed to the ``serving_schemas`` under ``target_catalog`` — base-table grants
+    elsewhere are neither added nor revoked. Catalog-level grants (e.g. the ``USE CATALOG`` the view
+    groups need) stay in scope but become add-only (see ``diff.diff_grants``). Only a real boolean
+    ``true`` skips; any other value keeps base grants managed (the validator warns on it)."""
+    if (reference or {}).get("skip_base_grants") is not True:
+        return None
+    prefix = f"{target_catalog}."
+    return sorted({s[len(prefix):] for s in (reference or {}).get("serving_schemas") or []
+                   if isinstance(s, str) and s.startswith(prefix)})

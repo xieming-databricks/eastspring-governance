@@ -120,7 +120,12 @@ from eastspring_uc_governance.compile import compile_config
 
 # mask_exempt_principals is stamped onto each column-mask policy's EXCEPT clause (target state),
 # so an exempt-list change surfaces as a policy CHANGE in the diff.
-state = compile_config(docs, mask_exempt_principals=mask_exempt_principals)
+# skip_base_grants (reference): base_grants.yaml is not compiled; grant full-sync is narrowed to the
+# serving schemas in the diff cell, so the unmanaged base-table grants are left exactly as they are.
+skip_base_grants = reference.get("skip_base_grants") is True   # only a real `true` skips
+print(f"[reconcile] skip_base_grants={skip_base_grants}")
+state = compile_config(docs, mask_exempt_principals=mask_exempt_principals,
+                       include_base_grants=not skip_base_grants)
 if not state.ok:
     for err in state.errors:
         print(f"  {err}")
@@ -193,10 +198,16 @@ print(f"[reconcile] protected schemas={sorted(protected_schemas)}")
 # DBTITLE 1,Diff in Spark -> per-dimension delta (ADD / REMOVE / CHANGE)
 from eastspring_uc_governance.reconcile import diff
 
+# skip_base_grants -> grants full-sync only inside the serving schemas (catalog-level add-only);
+# None -> the whole target catalog, as before. Tags / policies are unaffected.
+managed_grant_schemas = scope.managed_grant_schemas(reference, target_catalog)
+print(f"[reconcile] grant full-sync scope="
+      f"{'whole catalog' if managed_grant_schemas is None else managed_grant_schemas}")
 delta_frames = diff.diff_all(target, live_frames,
                              target_catalog=target_catalog,
                              protected_principals=protected_principals,
-                             protected_schemas=protected_schemas)
+                             protected_schemas=protected_schemas,
+                             managed_grant_schemas=managed_grant_schemas)
 delta_counts = {}
 for dim, df in delta_frames.items():
     rows = df.collect()

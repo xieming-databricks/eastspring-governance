@@ -199,3 +199,21 @@ def test_compile_config_esg():
     assert st.ok
     assert st.grants and st.tags and st.policies and st.refs
     assert all(p.policy_name.startswith("acm_policy_") for p in st.policies)
+
+
+# ---- skip_base_grants: base_grants.yaml rules are not compiled -------------
+
+def test_include_base_grants_false_compiles_only_view_grants():
+    docs = _cfg([{"groups": ["admins"], "bundle": "READ",
+                  "include": [{"type": "table", "name": "c.gold.t"}]}])
+    docs["rbac_view_grants"] = {"schema_version": "1.0", "grant_rules": [
+        {"groups": ["viewers"], "bundle": "READ", "include": [{"type": "schema", "name": "c.serving"}]}]}
+
+    both = {g.principal for g in compile_config(docs).grants}
+    views_only = compile_config(docs, include_base_grants=False)
+    assert both == {"admins", "viewers"}
+    assert {g.principal for g in views_only.grants} == {"viewers"}       # base rule dropped
+    assert views_only.ok
+    # the view grant still carries its own traversal (USE CATALOG) — it doesn't need base grants
+    assert ("USE_CATALOG", "catalog", "c") in {(g.privilege_type, g.securable_type, g.securable_fqn)
+                                              for g in views_only.grants}

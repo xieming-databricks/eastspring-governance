@@ -63,6 +63,59 @@ def test_grants_no_change_when_identical(spark):
     assert out.count() == 0
 
 
+# ---- grants: managed scope (skip_base_grants) ----------------------------
+
+def test_grants_managed_schemas_leave_base_grants_alone(spark):
+    # skip_base_grants: full-sync only inside the serving schema(s); base-table grants elsewhere
+    # are neither added nor revoked, and catalog-level grants are add-only.
+    target = spark.createDataFrame([
+        ("viewers", "SELECT", "schema", "c.serving"),       # managed -> ADD
+        ("viewers", "USE_CATALOG", "catalog", "c"),         # catalog-level, missing -> ADD
+        ("admins", "SELECT", "table", "c.gold.t"),          # base schema, unmanaged -> ignored
+    ], _GRANT)
+    live = spark.createDataFrame([
+        ("stale", "SELECT", "view", "c.serving.v"),         # managed, undeclared -> REMOVE
+        ("admins", "USE_CATALOG", "catalog", "c"),          # catalog-level, undeclared -> KEPT
+        ("admins", "MODIFY", "table", "c.gold.t"),          # base grant -> KEPT (not revoked)
+    ], _GRANT)
+    out = diff.diff_grants(target, live, target_catalog="c", managed_schemas=["serving"])
+    assert _keyset(out, "change_type", "principal", "securable_fqn") == {
+        ("ADD", "viewers", "c.serving"),
+        ("ADD", "viewers", "c"),
+        ("REMOVE", "stale", "c.serving.v"),
+    }
+
+
+def test_grants_managed_schemas_none_is_whole_catalog(spark):
+    # default (base grants managed): the same live base grant IS revoked — proves the scope matters.
+    target = spark.createDataFrame([("viewers", "SELECT", "schema", "c.serving")], _GRANT)
+    live = spark.createDataFrame([("admins", "MODIFY", "table", "c.gold.t")], _GRANT)
+    out = diff.diff_grants(target, live, target_catalog="c", managed_schemas=None)
+    assert ("REMOVE", "c.gold.t") in _keyset(out, "change_type", "securable_fqn")
+
+
+def test_grants_managed_schemas_empty_only_adds_catalog_grants(spark):
+    # skip_base_grants with no serving schemas: nothing below catalog level is managed.
+    target = spark.createDataFrame([("viewers", "USE_CATALOG", "catalog", "c")], _GRANT)
+    live = spark.createDataFrame([("x", "SELECT", "table", "c.any.t"),
+                                  ("y", "USE_CATALOG", "catalog", "c")], _GRANT)
+    out = diff.diff_grants(target, live, target_catalog="c", managed_schemas=[])
+    assert _keyset(out, "change_type", "securable_fqn") == {("ADD", "c")}
+
+
+def test_diff_all_passes_managed_scope_to_grants_only(spark):
+    empty_g = spark.createDataFrame([], _GRANT)
+    live_g = spark.createDataFrame([("admins", "MODIFY", "table", "c.gold.t")], _GRANT)
+    tags = spark.createDataFrame([], _TAG)
+    live_tags = spark.createDataFrame([("column", "c.gold.t.col", "acm_pii_type", "EMAIL")], _TAG)
+    pol = spark.createDataFrame([], _POLICY)
+    out = diff.diff_all({"grants": empty_g, "tags": tags, "policies": pol},
+                        {"grants": live_g, "tags": live_tags, "policies": pol},
+                        target_catalog="c", managed_grant_schemas=["serving"])
+    assert out["grants"].count() == 0                                  # base grant untouched
+    assert _keyset(out["tags"], "change_type") == {("REMOVE",)}        # tags still whole-catalog
+
+
 # ---- tags: ADD / REMOVE / CHANGE, acm_ only -----------------------------
 
 def test_tags_add_remove_change(spark):

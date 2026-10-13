@@ -412,6 +412,14 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
                                     "(expected the Entra ID Object ID)",
                                     "reference", "warning"))
 
+    # skip_base_grants must be a real boolean: only `true` skips, so a quoted "true" (or 1) would
+    # silently keep base grants managed — flag it.
+    if "skip_base_grants" in reference and not isinstance(reference["skip_base_grants"], bool):
+        issues.append(Issue("reference", "skip_base_grants",
+                            f"skip_base_grants must be true or false, got "
+                            f"{reference['skip_base_grants']!r} (treated as false)",
+                            "reference", "warning"))
+
     # approved-schema set = union of the role buckets (source + governance + serving).
     src_schemas = reference.get("source_schemas")
     srv_schemas = reference.get("serving_schemas")

@@ -385,3 +385,10 @@ def test_cli_verbose_lists_checks(capsys):
     assert "checked" in out
     assert "vs grants.schema.yaml" in out           # per-file schema shown
     assert "reference:" in out                      # reference allow-list check shown
+
+
+def test_skip_base_grants_must_be_boolean():
+    for ok in (True, False):
+        assert check_reference({}, {"skip_base_grants": ok}) == []
+    msgs = [i.message for i in check_reference({}, {"skip_base_grants": "true"})]
+    assert msgs == ["skip_base_grants must be true or false, got 'true' (treated as false)"]

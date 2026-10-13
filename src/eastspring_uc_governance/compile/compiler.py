@@ -31,7 +31,12 @@ def _scope_type(scope: str) -> str:
     return {0: "catalog", 1: "schema", 2: "table"}.get(n, "table")
 
 
-def compile_config(docs: dict[str, Any], *, mask_exempt_principals: Any = ()) -> TargetState:
+def compile_config(docs: dict[str, Any], *, mask_exempt_principals: Any = (),
+                   include_base_grants: bool = True) -> TargetState:
+    """Compile the YAML docs into target state. ``include_base_grants=False`` (the reference's
+    ``skip_base_grants``) drops ``base_grants.yaml`` rules: only the serving-schema (view) grants
+    are compiled. Pair it with a grant scope limited to the serving schemas at diff time
+    (``scope.managed_grant_schemas``), or full-sync would revoke the unmanaged base grants."""
     exempt = ",".join(sorted(p.strip() for p in (mask_exempt_principals or []) if isinstance(p, str) and p.strip()))
     state = TargetState()
     base_grants = _doc(docs, "base_grants")
@@ -59,9 +64,11 @@ def compile_config(docs: dict[str, Any], *, mask_exempt_principals: Any = ()) ->
             state.tags.append(TargetTag(st, fqn, k, v))
 
     # --- grants: base (base_grants.yaml) + serving-schema (rbac_grants.yaml) ---
-    # Both are grant_rules and compile identically (bundle-expand into TargetGrants).
+    # Both are grant_rules and compile identically (bundle-expand into TargetGrants). Base rules
+    # are skipped when the deployment doesn't manage base-table grants (skip_base_grants).
     grant_set: set[TargetGrant] = set()
-    all_rules = base_grants.get("grant_rules", []) + rbac_view_grants.get("grant_rules", [])
+    base_rules = base_grants.get("grant_rules", []) if include_base_grants else []
+    all_rules = base_rules + rbac_view_grants.get("grant_rules", [])
     for i, rule in enumerate(all_rules):
         groups = rule["groups"]
         bundle = rule["bundle"]
