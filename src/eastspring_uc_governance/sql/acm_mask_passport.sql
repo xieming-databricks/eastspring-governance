@@ -1,11 +1,11 @@
 -- Column-mask UDF for acm_pii_type = PASSPORT.
 -- Referenced by the ABAC policy: COLUMN MASK `${catalog}`.`${governance_schema}`.acm_mask_passport
--- TODO(governance): confirm the masking transform and the unmasked-group list.
+-- The WHEN condition is GENERATED from the reference's `groups` (every group named *unmasked
+-- reads the raw value; none -> FALSE, everyone masked). TODO(governance): confirm the transform.
 CREATE OR REPLACE FUNCTION `${catalog}`.`${governance_schema}`.acm_mask_passport(v STRING)
 RETURNS STRING
 RETURN CASE
-         WHEN is_account_group_member('hera-all-esg-read-unmasked')
-           OR is_account_group_member('hera-all-admin-admin-unmasked')
+         WHEN ${unmasked_condition}
          THEN v
          ELSE '********'                          -- full redaction
        END;

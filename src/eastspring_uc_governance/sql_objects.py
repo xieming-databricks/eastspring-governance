@@ -4,9 +4,11 @@ The ``sql/*.sql`` files ship inside the package and contain no deployment specif
 and governance schema are ``${catalog}`` / ``${governance_schema}`` placeholders, filled in from
 the env's ``config/reference/<env>.yaml``:
 
-- ``catalog``           <- ``target_catalog``
-- ``governance_schema`` <- the one ``governance_schemas`` entry under ``target_catalog``
+- ``catalog``            <- ``target_catalog``
+- ``governance_schema``  <- the one ``governance_schemas`` entry under ``target_catalog``
   (bare name, e.g. ``governance`` for ``hera-dev.governance``)
+- ``unmasked_condition`` <- the ``groups`` whose name ends in ``unmasked``, as
+  ``is_account_group_member('<name>') OR …`` (``FALSE`` when there are none: nobody is unmasked)
 
 Rendering fails loudly on a missing value or an unknown placeholder (``string.Template.substitute``),
 so a typo never reaches ``spark.sql``. Pure Python — no Spark, so it is unit-testable.
@@ -16,6 +18,24 @@ from __future__ import annotations
 from importlib import resources
 from string import Template
 from typing import Any
+
+
+UNMASKED_SUFFIX = "unmasked"   # groups named *unmasked read raw values (inlined in every acm_mask_*)
+
+
+def unmasked_groups(reference: dict[str, Any]) -> list[str]:
+    """Names of the reference ``groups`` that may read unmasked values: those ending in
+    ``unmasked``, in reference order, de-duplicated."""
+    names = [g.get("name") if isinstance(g, dict) else g for g in reference.get("groups") or []]
+    return list(dict.fromkeys(n for n in names if isinstance(n, str) and n.endswith(UNMASKED_SUFFIX)))
+
+
+def _unmasked_condition(groups: list[str]) -> str:
+    # a SQL boolean expression for a mask's `WHEN`; group names are single-quoted literals (quotes
+    # doubled). Continuation lines are indented to sit under `WHEN` in the mask UDFs.
+    if not groups:
+        return "FALSE"                 # fail closed: no unmasked group -> everyone sees masked
+    return "\n           OR ".join("is_account_group_member('" + g.replace("'", "''") + "')" for g in groups)
 
 
 def sql_variables(reference: dict[str, Any]) -> dict[str, str]:
@@ -29,7 +49,8 @@ def sql_variables(reference: dict[str, Any]) -> dict[str, str]:
                          f"found {governance}")
     # values go inside backtick-quoted identifiers in the SQL; double any backtick to stay quoted.
     return {"catalog": catalog.replace("`", "``"),
-            "governance_schema": governance[0].split(".", 1)[1].replace("`", "``")}
+            "governance_schema": governance[0].split(".", 1)[1].replace("`", "``"),
+            "unmasked_condition": _unmasked_condition(unmasked_groups(reference))}
 
 
 def render_sql_objects(reference: dict[str, Any]) -> list[tuple[str, str]]:

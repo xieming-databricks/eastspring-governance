@@ -57,7 +57,9 @@ rls_group_column: ad_group
 # workspace-level IAM v2 proxy API — no account-level access needed). The groups themselves are
 # still account-level (usable in UC grants); an env that shares a group with another env lists it too.
 #
-# name        the group's display name (what grants reference).
+# name        the group's display name (what grants reference). A name ending in "unmasked" is a
+#             read-UNMASKED group: it is generated into every acm_mask_* UDF's unmasked check, so
+#             its members see raw PII. Name groups deliberately.
 # external_id the group's Microsoft Entra ID Object ID (GUID) — the authoritative AIM link — and
 #             it picks how the group is provisioned:
 #               set   -> resolved (and provisioned) from Entra ID via AIM (`resolve-group-proxy`)
