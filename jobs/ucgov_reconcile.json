@@ -2,6 +2,7 @@
   "name": "ucgov-reconcile",
   "description": "Full-sync the reference's target_catalog against the YAML config (notebooks/reconcile.py). mode=plan changes nothing. Managed by azure-pipelines.yml - edits in the UI are overwritten on the next deploy.",
   "max_concurrent_runs": 1,
+  "queue": { "enabled": true },
   "parameters": [
     { "name": "config_path",    "default": "" },
     { "name": "reference_path", "default": "" },

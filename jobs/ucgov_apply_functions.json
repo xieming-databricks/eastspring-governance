@@ -2,6 +2,7 @@
   "name": "ucgov-apply-functions",
   "description": "CREATE OR REPLACE the packaged mask UDFs + group_portfolio_access MV (notebooks/apply_functions.py). mode=plan changes nothing. Managed by azure-pipelines.yml - edits in the UI are overwritten on the next deploy.",
   "max_concurrent_runs": 1,
+  "queue": { "enabled": true },
   "parameters": [
     { "name": "reference_path", "default": "" },
     { "name": "mode",           "default": "plan" },
