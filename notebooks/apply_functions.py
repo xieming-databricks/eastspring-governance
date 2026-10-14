@@ -10,14 +10,14 @@
 # MAGIC The target governance schema must already exist (`ucgov-provision schemas`, or seed / Terraform).
 # MAGIC The `group_portfolio_access` MV needs **serverless** compute.
 # MAGIC
-# MAGIC **Widgets:** `wheel_path` (the wheel on a UC Volume), `reference_path` (required — the env's
+# MAGIC **Widgets:** `wheel_path` (the wheel in the workspace), `reference_path` (required — the env's
 # MAGIC reference YAML, e.g. `.../configs/reference/esg.yaml`; empty / missing / unreadable stops the
 # MAGIC notebook), `mode` = `plan` (default; prints the SQL, runs nothing) | `apply`.
 
 # COMMAND ----------
 
 dbutils.widgets.text("wheel_path",
-                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
+                     "/Workspace/Users/xieming.li@eastspring.com/notebooks/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 

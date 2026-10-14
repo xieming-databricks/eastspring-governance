@@ -4,11 +4,11 @@ trigger:
   - main
 
 variables:
-  - group: DEV-HERA-REPLATFORM        # must define: adb (workspace URL), accessToken (secret)
+  - group: DEV-HERA-REPLATFORM
   - name: cliVersion
     value: 1.19.0
-  - name: wheelVolume                 # must match the notebooks' wheel_path widget
-    value: /Volumes/hera-dev/governance/wheels
+  - name: wheelFolder
+    value: /Workspace/Users/xieming.li@eastspring.com/wheels
   - name: notebookFolder
     value: /Workspace/Users/xieming.li@eastspring.com/notebooks
 
@@ -118,14 +118,17 @@ steps:
     Write-Host "running as     : $($me.userName) (id $($me.id))"
 
     $whl = Get-ChildItem "$(Build.ArtifactStagingDirectory)\dist\*.whl" | Select-Object -First 1
-    $target = "dbfs:$(wheelVolume)/$($whl.Name)"
-    Log "Upload wheel"
+    if (-not $whl) { Fail "no .whl in $(Build.ArtifactStagingDirectory)\dist" }
+    $target = "$(wheelFolder)/$($whl.Name)"
+    Log "Upload wheel (workspace file)"
     Write-Host "from           : $($whl.FullName)"
     Write-Host "to             : $target"
-    databricks fs cp $whl.FullName $target --overwrite
+    databricks workspace mkdirs "$(wheelFolder)"
+    if ($LASTEXITCODE -ne 0) { Fail "could not create $(wheelFolder) (exit $LASTEXITCODE)" }
+    databricks workspace import "$target" --file $whl.FullName --format AUTO --overwrite
     if ($LASTEXITCODE -ne 0) { Fail "wheel upload failed (exit $LASTEXITCODE)" }
-    Write-Host "##[group]files now in $(wheelVolume)"
-    databricks fs ls "dbfs:$(wheelVolume)"
+    Write-Host "##[group]objects now in $(wheelFolder)"
+    databricks workspace list "$(wheelFolder)"
     Write-Host "##[endgroup]"
 
     Log "Deploy notebooks"

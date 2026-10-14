@@ -28,13 +28,13 @@
 # MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
 # MAGIC POLICY` — requires **ABAC-capable compute**).
 # MAGIC
-# MAGIC **`wheel_path`:** the `eastspring-uc-governance` wheel on a UC Volume; installed below
+# MAGIC **`wheel_path`:** the `eastspring-uc-governance` wheel in the workspace; installed below
 # MAGIC (`%pip`), so the notebook needs no repo checkout — only the config dir at `config_path`.
 
 # COMMAND ----------
 
 dbutils.widgets.text("wheel_path",
-                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
+                     "/Workspace/Users/xieming.li@eastspring.com/notebooks/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
