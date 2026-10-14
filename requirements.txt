@@ -2,6 +2,7 @@
 # mode with the dev extra (this file is kept so `pip install -r requirements.txt` still works):
 -e .[dev]
 
-# pyspark is PROVIDED BY THE DATABRICKS RUNTIME — do NOT pip-install it on a cluster.
-# The reconcile modules (live/frames/diff) import it directly. For LOCAL testing only,
-# install it yourself: `pip install pyspark` (Spark 4.x needs Java 17+, e.g. JDK 25).
+# To also run the Spark tests (tests/test_diff.py) locally / in CI, add the `spark` extra instead:
+#     pip install -e ".[dev,spark]"
+# It pins pyspark to the customer's Databricks Spark version and needs Java 8/11/17 (JAVA_HOME).
+# pyspark is PROVIDED BY THE DATABRICKS RUNTIME — never install it on a cluster.

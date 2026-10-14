@@ -18,7 +18,14 @@ dependencies = [
 # reconcile / apply modules import it (lazily), so installing + importing the package never needs it.
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov",         # coverage: pytest --cov=eastspring_uc_governance --cov-report=term-missing
+]
+# Local / CI testing only — NEVER install on a Databricks cluster (the runtime provides pyspark).
+# Pin to the Spark version of the customer's Databricks runtime (DBR 15.4 LTS / 16.x = Spark 3.5).
+# Verified: 3.5.9 on Python 3.12 and 3.13. Needs Java 8/11/17 (JAVA_HOME); not Python 3.14.
+spark = ["pyspark>=3.5,<3.6"]
 
 [project.scripts]
 ucgov-validate = "eastspring_uc_governance.validation.cli:main"
