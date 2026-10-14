@@ -496,3 +496,86 @@ def test_skip_base_grants_must_be_boolean():
         assert check_reference({}, {"skip_base_grants": ok}) == []
     msgs = [i.message for i in check_reference({}, {"skip_base_grants": "true"})]
     assert msgs == ["skip_base_grants must be true or false, got 'true' (treated as false)"]
+
+
+# ---- summary line, unreadable files, missing / malformed documents ------
+
+def _docs():
+    g, p, t, l = _baseline()
+    return {"base_grants.yaml": g, "policies.yaml": p, "tags.yaml": t, "labels.yaml": l}
+
+
+def test_summary_text_for_clean_warning_and_error_results():
+    """The one-line summary distinguishes a clean result, warnings only, and errors.
+
+    Expected: "OK <docs> — no issues" when clean; "OK <docs> — 0 error(s), 1 warning(s)" when the
+    only problem is an off-list group; a line starting "FAIL <docs> —" when there is an error.
+    """
+    assert validate_docs(_docs()).summary() == "OK <docs> — no issues"
+    assert validate_docs(_docs(), reference={"groups": []}).summary() == \
+        "OK <docs> — 0 error(s), 1 warning(s)"
+    bad = _docs()
+    bad["base_grants.yaml"]["grant_rules"][0]["bundle"] = "SUPERUSER"
+    assert validate_docs(bad).summary().startswith("FAIL <docs> — ")
+
+
+@pytest.mark.parametrize("filename", ["tags.yaml", "rbac_views.yaml"])   # required and optional
+def test_yaml_syntax_error_is_reported(tmp_path, filename):
+    """For a required file (tags.yaml) and an optional one (rbac_views.yaml), a file that isn't valid
+    YAML is reported instead of crashing the validator.
+
+    Expected: result.ok is False, an issue for that file starting "YAML parse error", and that
+    file's check status is issues.
+    """
+    cfg = _write_config(tmp_path, *_baseline())
+    (cfg / filename).write_text("tags: [unclosed\n")
+    result = validate_dir(cfg, reference={})
+    assert not result.ok
+    assert any(i.file == filename and i.message.startswith("YAML parse error") for i in result.issues)
+    assert {c.target: c for c in result.checks}[filename].status == "issues"
+
+
+def test_unparseable_reference_is_skipped(tmp_path):
+    """An auto-discovered reference file that isn't valid YAML is skipped rather than failing.
+
+    Expected: the config still validates (ok) and the reference check status is skipped.
+    """
+    cfg = tmp_path / "esg"
+    cfg.mkdir()
+    _write_config(cfg, *_baseline())
+    (tmp_path / "reference").mkdir()
+    (tmp_path / "reference" / "esg.yaml").write_text("groups: [unclosed\n")
+    result = validate_dir(cfg)
+    assert result.ok
+    assert {c.target: c for c in result.checks}["reference"].status == "skipped"
+
+
+def test_validate_docs_reports_missing_document():
+    """validate_docs, given in-memory documents, reports a required document that wasn't supplied.
+
+    Expected: result.ok is False, a "document not provided" issue for tags.yaml, and its check
+    status is missing.
+    """
+    docs = _docs()
+    del docs["tags.yaml"]
+    result = validate_docs(docs)
+    assert not result.ok
+    assert any(i.file == "tags.yaml" and i.message == "document not provided" for i in result.issues)
+    assert {c.target: c for c in result.checks}["tags.yaml"].status == "missing"
+
+
+def test_non_mapping_documents_do_not_crash():
+    """Documents, entries and references of the wrong shape (lists or strings where mappings are
+    expected) are reported as schema problems, and the semantic and reference layers skip them
+    instead of crashing.
+
+    Expected: validate_docs on list-valued documents returns ok False without raising; check_reference
+    with non-mapping entries, or with a non-mapping reference, returns no issues.
+    """
+    result = validate_docs({name: ["not", "a", "mapping"] for name in _docs()})
+    assert not result.ok
+    shapeless = {"base_grants": {"grant_rules": ["x"]}, "labels": {"labels": ["x"]},
+                 "tags": {"tags": ["x"]}, "policies": {"column_mask_policies": ["x"]},
+                 "rbac_views": {"views": ["x"]}}
+    assert check_reference(shapeless, {"groups": []}) == []
+    assert check_reference(_docs(), "not-a-reference") == []

@@ -337,3 +337,23 @@ def test_unknown_dimension_raises():
     """
     with pytest.raises(statement.ApplyError):
         statement.statements_for("widgets", [])
+
+
+# ---- defensive branches: unexpected change types -----------------------
+
+@pytest.mark.parametrize("build", [
+    pytest.param(lambda: statement.grant_statement(_g("CHANGE", "g", "SELECT", "table", "c.s.t")),
+                 id="grant_change"),          # grants have no CHANGE — only ADD / REMOVE
+    pytest.param(lambda: statement.tag_statement(_t("BOGUS", "table", "c.s.t", "acm_x", "v")),
+                 id="tag_bogus"),
+    pytest.param(lambda: statement.policy_statement(_prow("BOGUS"), _pdef()),
+                 id="policy_bogus"),
+])
+def test_unexpected_change_type_raises(build):
+    """For each builder (grant, tag, policy), a change type it doesn't handle is refused rather than
+    silently turned into SQL; grants in particular have no CHANGE.
+
+    Expected: ApplyError mentioning "unexpected … change_type" for every case.
+    """
+    with pytest.raises(statement.ApplyError, match=r"unexpected \w+ change_type"):
+        build()

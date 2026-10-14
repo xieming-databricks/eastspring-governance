@@ -296,3 +296,40 @@ def test_include_base_grants_false_compiles_only_view_grants():
     # the view grant still carries its own traversal (USE CATALOG) — it doesn't need base grants
     assert ("USE_CATALOG", "catalog", "c") in {(g.privilege_type, g.securable_type, g.securable_fqn)
                                               for g in views_only.grants}
+
+
+# ---- bundle expansion: remaining branches -----------------------------------
+
+def test_write_catalog_and_schema():
+    """The WRITE bundle on a whole catalog or schema grants READ's privileges plus MODIFY at that
+    level, which every table below inherits.
+
+    Expected: on catalog a, exactly USE_CATALOG, USE_SCHEMA, SELECT and MODIFY (all on the catalog);
+    on schema a.b, exactly USE_CATALOG on a plus USE_SCHEMA, SELECT and MODIFY on a.b.
+    """
+    assert S(expand_bundle("WRITE", "catalog", "a")) == {
+        ("USE_CATALOG", "catalog", "a"), ("USE_SCHEMA", "catalog", "a"),
+        ("SELECT", "catalog", "a"), ("MODIFY", "catalog", "a"),
+    }
+    assert S(expand_bundle("WRITE", "schema", "a.b")) == {
+        ("USE_CATALOG", "catalog", "a"), ("USE_SCHEMA", "schema", "a.b"),
+        ("SELECT", "schema", "a.b"), ("MODIFY", "schema", "a.b"),
+    }
+
+
+def test_read_unsupported_object_type_raises():
+    """READ on an object type it has no meaning for (a column) is refused.
+
+    Expected: BundleError "READ not supported for object type 'column'".
+    """
+    with pytest.raises(BundleError, match="READ not supported for object type 'column'"):
+        expand_bundle("READ", "column", "a.b.c.d")
+
+
+def test_unknown_bundle_raises():
+    """A bundle name outside READ/WRITE/OWNER/ADMIN is refused.
+
+    Expected: BundleError "unknown bundle 'SUPERUSER'".
+    """
+    with pytest.raises(BundleError, match="unknown bundle 'SUPERUSER'"):
+        expand_bundle("SUPERUSER", "table", "a.b.c")

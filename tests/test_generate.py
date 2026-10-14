@@ -4,14 +4,16 @@ v3 dynamic-views layout: Base Tables / Base Grant Rules / Base Grant Exceptions 
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 from eastspring_uc_governance.compile import compile_config
 from eastspring_uc_governance.generate import generate_config, read_workbook
-from eastspring_uc_governance.generate.generator import GeneratorError, REQUIRED_SHEETS
-from eastspring_uc_governance.validation import validate_docs
+from eastspring_uc_governance.generate.generator import GeneratorError, REQUIRED_SHEETS, write_config
+from eastspring_uc_governance.validation import validate_dir, validate_docs
 
 REPO = Path(__file__).resolve().parents[1]
 WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"
@@ -257,3 +259,60 @@ def test_real_v3_workbook_generates_valid_config():
     assert len(masks) == 4
     assert all(m["function"].split(".")[-1].startswith("acm_") for m in masks)
     assert all("table_matching_tags" not in m for m in masks)   # when_key/value dropped
+
+
+# ---- referential-integrity failures: each mistake -> its specific message ----
+
+@pytest.mark.parametrize("mutate, message", [
+    pytest.param(lambda w: w["Base Grant Rules"].append(dict(w["Base Grant Rules"][0])),
+                 "'Base Grant Rules' tab: duplicate rule_id 'GR1'", id="duplicate_base_rule_id"),
+    pytest.param(lambda w: w["Base Tables"][0].__setitem__("data_product", "dp_zzz"),
+                 "Base Tables row 0: data_product 'dp_zzz' not in 'Data Products' tab",
+                 id="base_table_unknown_data_product"),
+    pytest.param(lambda w: w["Base Tables"][0].pop("catalog"),
+                 "Base Tables row 0: missing catalog/schema/object", id="base_table_missing_catalog"),
+    pytest.param(lambda w: w["Base Grant Exceptions"].append(
+        {"exception_id": "EX9", "rule_id": "GR1", "action": "maybe", "object_type": "table",
+         "object": "c.s.z"}),
+        "Base Grant Exceptions EX9: action 'maybe' must be include/exclude", id="exception_bad_action"),
+    pytest.param(lambda w: w["Permission Bundles"].__setitem__(slice(None), [{"bundle": "READ"}]),
+                 "Base Grant Rules GR1: bundle 'ADMIN' not in 'Permission Bundles' tab",
+                 id="bundle_not_in_bundles_tab"),
+    pytest.param(lambda w: w["Rbac Views"].append(dict(w["Rbac Views"][0])),
+                 "'Rbac Views' tab: duplicate rule_id 'RBAC1'", id="duplicate_rbac_rule_id"),
+    pytest.param(lambda w: w["Asset Classification"].append({"tag_key": "acm_pii_type", "tag_value": "EMAIL"}),
+                 "Asset Classification row 0: missing object", id="asset_missing_object"),
+    pytest.param(lambda w: w["Masking Rules"].append(
+        {"match_columns_key": "acm_pii_type", "match_columns_value": "EMAIL",
+         "function": "c.gov.acm_mask_email"}),
+        "Masking Rules row 0: missing attach (scope)", id="mask_missing_attach"),
+])
+def test_referential_violation_reports_specific_problem(mutate, message):
+    """For each workbook mistake not covered above (duplicate rule ids, unknown data product, missing
+    catalog, bad exception action, bundle missing from the Permission Bundles tab, asset row without
+    an object, masking rule without attach), generation reports that exact problem.
+
+    Expected: GeneratorError whose message contains the specific problem text for that mistake.
+    """
+    wb = _wb()
+    mutate(wb)
+    with pytest.raises(GeneratorError, match=re.escape(message)):
+        generate_config(wb)
+
+
+# ---- write_config: the generated docs land on disk, valid ----------------------
+
+def test_write_config_writes_all_six_files(tmp_path):
+    """write_config writes every generated document to its own YAML file, and the written directory
+    is a valid config.
+
+    Expected: exactly the 6 files (base_grants, rbac_view_grants, rbac_views, labels, tags, policies
+    .yaml), each loading back to the generated document, and validate_dir on the folder is ok.
+    """
+    docs = generate_config(_wb())
+    out = write_config(docs, tmp_path / "out")
+    shorts = ["base_grants", "rbac_view_grants", "rbac_views", "labels", "tags", "policies"]
+    assert sorted(f.name for f in out.iterdir()) == sorted(f"{s}.yaml" for s in shorts)
+    for short in shorts:
+        assert yaml.safe_load((out / f"{short}.yaml").read_text()) == docs[short], short
+    assert validate_dir(out, reference={}).ok
