@@ -7,7 +7,7 @@ The CLI alternative to ``terraform/``, with the same split and the same YAML con
   so it needs a workspace admin, not account-level access.
 - **schemas**: the governance + serving schemas under the pre-existing ``target_catalog``.
 
-Both read the env's ``config/reference/<env>.yaml``.
+Both read the reference YAML given by ``--reference`` (required).
 
 ``planner`` (pure Python) diffs the YAML against live state into ``Action``s; ``cli_runner``
 reads live state and executes actions through the ``databricks`` CLI. Additive only — nothing

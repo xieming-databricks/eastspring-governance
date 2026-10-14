@@ -469,26 +469,33 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
     return issues
 
 
-def _load_reference(config_dir: Path) -> dict[str, Any] | None:
-    """Auto-discover the reference allow-list at ``config/reference/<config_dir.name>.yaml``.
-    Returns None if absent or unparseable (a missing reference simply skips the warning layer)."""
-    ref_path = config_dir.parent / "reference" / f"{config_dir.name}.yaml"
-    if not ref_path.exists():
-        return None
+def load_reference(ref_path: str | Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Load the reference allow-list at ``ref_path`` (always an explicit path — never derived
+    from a config dir). Returns ``(reference, None)``, or ``(None, reason)`` when the path is
+    empty, missing, unparseable, or not a mapping. Every entry point (ucgov-validate,
+    ucgov-provision, the notebooks) loads the reference through this."""
+    if not str(ref_path).strip():
+        return None, "reference allow-list path is empty"
+    ref_path = Path(ref_path)
+    if not ref_path.is_file():
+        return None, f"reference allow-list not found: {ref_path}"
     try:
         loaded = yaml.safe_load(ref_path.read_text())
-    except yaml.YAMLError:
-        return None
-    return loaded if isinstance(loaded, dict) else None
+    except yaml.YAMLError as exc:
+        return None, f"reference allow-list YAML parse error ({ref_path}): {exc}"
+    if not isinstance(loaded, dict):
+        return None, f"reference allow-list is not a mapping: {ref_path}"
+    return loaded, None
 
 
 def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
-                 reference: Any = None) -> ValidationResult:
+                 reference: dict[str, Any] | str | Path | None = None) -> ValidationResult:
     """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas.
 
-    If ``reference`` is None, the allow-list at ``config/reference/<config_dir.name>.yaml`` is
-    auto-loaded (when present) and its warnings appended. Pass an explicit dict to override, or
-    ``{}`` to disable the warning layer.
+    ``reference`` is the allow-list: a path to the reference YAML (e.g. ``reference/esg.yaml``) or
+    an already-loaded dict, and its warnings are appended. It is never auto-discovered: None, or a
+    missing / unreadable file, is an ERROR (otherwise the group / schema / tag checks would be
+    silently skipped). Pass ``{}`` to deliberately disable the warning layer (schema-only).
     """
     config_dir = Path(config_dir)
     schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
@@ -532,16 +539,22 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
     result.checks.append(Check("schema_version", f"agreement across {len(schema_versions)} file(s)",
                                "ok" if not version_issues else "issues"))
 
-    ref_path = config_dir.parent / "reference" / f"{config_dir.name}.yaml"
     if reference is None:
-        reference = _load_reference(config_dir)
-    if isinstance(reference, dict):
-        ref_issues = check_reference(parsed, reference)
-        result.issues.extend(ref_issues)
-        result.checks.append(Check("reference", _describe_reference(reference),
-                                   "warnings" if ref_issues else "ok"))
-    else:
-        result.checks.append(Check("reference", f"no allow-list found ({ref_path.name})", "skipped"))
+        reason = "reference allow-list not provided (pass the reference YAML, e.g. reference/esg.yaml)"
+        result.issues.append(Issue("reference", "", reason, "reference"))
+        result.checks.append(Check("reference", reason, "missing"))
+        return result
+    if isinstance(reference, (str, Path)):
+        ref_path = Path(reference)
+        reference, reason = load_reference(ref_path)
+        if reason:
+            result.issues.append(Issue(ref_path.name, "", reason, "reference"))
+            result.checks.append(Check("reference", reason, "missing"))
+            return result
+    ref_issues = check_reference(parsed, reference)
+    result.issues.extend(ref_issues)
+    result.checks.append(Check("reference", _describe_reference(reference),
+                               "warnings" if ref_issues else "ok"))
 
     return result
 

@@ -6,7 +6,7 @@
 -- NOTE ON GROUPS: the ESG account groups config/esg grants reference must exist BEFORE running an
 -- `apply`. For dev without Entra, leave each group's external_id null in config/reference/esg.yaml
 -- (created as local groups), then:
---     ucgov-provision groups --env esg --profile <workspace-profile> --apply   (workspace admin)
+--     ucgov-provision groups --reference config/reference/esg.yaml --profile <workspace-profile> --apply   (workspace admin)
 -- (or the Terraform alternative: cd terraform/account && terraform apply -var env=esg)
 -- (grants to a non-existent principal fail at apply time.)
 --

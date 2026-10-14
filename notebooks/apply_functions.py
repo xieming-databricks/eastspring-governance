@@ -3,22 +3,22 @@
 # MAGIC # Apply SQL objects — `CREATE OR REPLACE` the packaged mask UDFs + `group_portfolio_access` MV
 # MAGIC
 # MAGIC The SQL bodies ship **inside the `eastspring-uc-governance` wheel** (`sql/*.sql`) and contain no
-# MAGIC deployment specifics: `${catalog}` / `${governance_schema}` are filled in from the env's
-# MAGIC `config/reference/<env>.yaml` (`target_catalog`, `governance_schemas`). Every object is applied
+# MAGIC deployment specifics: `${catalog}` / `${governance_schema}` / `${unmasked_condition}` are filled
+# MAGIC in from the env's reference YAML (`target_catalog`, `governance_schemas`, `groups`). Every object is applied
 # MAGIC **idempotently** (`CREATE OR REPLACE`), so re-running is a no-op.
 # MAGIC
 # MAGIC The target governance schema must already exist (`ucgov-provision schemas`, or seed / Terraform).
 # MAGIC The `group_portfolio_access` MV needs **serverless** compute.
 # MAGIC
-# MAGIC **Widgets:** `wheel_path` (the wheel on a UC Volume), `config_path` (the env's config dir —
-# MAGIC its sibling `reference/<env>.yaml` is read), `mode` = `plan` (default; prints the SQL, runs
-# MAGIC nothing) | `apply`.
+# MAGIC **Widgets:** `wheel_path` (the wheel on a UC Volume), `reference_path` (required — the env's
+# MAGIC reference YAML, e.g. `.../configs/reference/esg.yaml`; empty / missing / unreadable stops the
+# MAGIC notebook), `mode` = `plan` (default; prints the SQL, runs nothing) | `apply`.
 
 # COMMAND ----------
 
 dbutils.widgets.text("wheel_path",
-                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.1.0-py3-none-any.whl")
-dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
+                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
+dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
 wheel_path = dbutils.widgets.get("wheel_path").strip()
@@ -34,16 +34,14 @@ dbutils.library.restartPython()   # clears Python state — widgets are re-read 
 # COMMAND ----------
 
 # DBTITLE 1,Load the env reference + render the packaged SQL
-from pathlib import Path
-
-import yaml
-
 from eastspring_uc_governance.sql_objects import render_sql_objects
+from eastspring_uc_governance.validation import load_reference
 
-config_path = Path(dbutils.widgets.get("config_path").strip())
+reference_path = dbutils.widgets.get("reference_path").strip()   # required — never derived
 mode = dbutils.widgets.get("mode").strip()
-reference_path = config_path.parent / "reference" / f"{config_path.name}.yaml"
-reference = yaml.safe_load(reference_path.read_text()) or {}
+reference, reason = load_reference(reference_path)
+if reason:
+    raise ValueError(f"[functions] {reason} — set the reference_path widget")
 print(f"[functions] reference={reference_path} | mode={mode}")
 
 objects = render_sql_objects(reference)   # raises on a missing value / unknown placeholder

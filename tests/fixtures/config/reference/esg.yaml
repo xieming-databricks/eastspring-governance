@@ -13,7 +13,7 @@ schema_version: "1.0"
 # ---- target catalog: the single catalog this deployment is authoritative over ---
 # Full-sync makes this catalog framework-owned: any grant in it the config does not
 # declare becomes a REMOVE (minus the protected set below). The reconcile notebook
-# reads this instead of a hand-typed widget default.
+# takes the catalog from here only (there is no widget override).
 target_catalog: hera-dev
 
 # ---- protected set: full-sync guardrails (never REMOVE / never touch) ------------

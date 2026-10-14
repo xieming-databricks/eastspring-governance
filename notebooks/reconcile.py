@@ -16,11 +16,13 @@
 # MAGIC **`config_path`:** workspace path holding `base_grants.yaml` / `labels.yaml` /
 # MAGIC `tags.yaml` / `policies.yaml` (+ optional `rbac_view_grants.yaml`, `rbac_views.yaml`).
 # MAGIC
-# MAGIC **Reference allow-list** (`../reference/<config_dir_name>.yaml`, sibling of the config
-# MAGIC dir): hand-curated per-deployment source of truth for the **`target_catalog`**, the
+# MAGIC **`reference_path`** (required — never derived from `config_path`): the reference allow-list
+# MAGIC YAML, e.g. `.../configs/reference/esg.yaml`. Hand-curated per-deployment source of truth for
+# MAGIC the **`target_catalog`**, the
 # MAGIC **protected set** (`protected_principals` = `deployers` + `admin_groups`, plus
 # MAGIC `protected_schemas`), and the approved vocabulary (groups / schemas / governed_tags)
-# MAGIC that off-list use warns against.
+# MAGIC that off-list use warns against. Empty, missing or unreadable -> the notebook stops before
+# MAGIC anything runs (without it full-sync would have no protected set).
 # MAGIC
 # MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
 # MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
@@ -32,11 +34,9 @@
 # COMMAND ----------
 
 dbutils.widgets.text("wheel_path",
-                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.1.0-py3-none-any.whl")
+                     "/Volumes/hera-dev/governance/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
-# Leave target_catalog blank to use the reference allow-list's `target_catalog` (the source of
-# truth); set it only to override the reference for an ad-hoc run.
-dbutils.widgets.text("target_catalog", "", "target catalog (optional override of reference allow-list)")
+dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
 wheel_path = dbutils.widgets.get("wheel_path").strip()
@@ -78,22 +78,23 @@ for opt in ("rbac_view_grants", "rbac_views"):
     if opt_path.exists():
         docs[opt] = yaml.safe_load(opt_path.read_text())
 
-# Reference allow-list: authoritative, hand-curated per-deployment config. Lives at
-# ../reference/<config_dir_name>.yaml (sibling of the config dir), NOT generated from the workbook.
-# Holds the approved vocabulary (warning layer) + the target catalog, full-sync protected set, the
-# mask-exempt (ETL) principals, and the RLS entitlement table. Optional: absent -> warning layer
-# skipped and target_catalog must come from the widget.
-reference_path = config_path.parent / "reference" / f"{config_path.name}.yaml"
-reference = {}
-if reference_path.exists():
-    reference = yaml.safe_load(reference_path.read_text()) or {}
+# Reference allow-list: authoritative, hand-curated per-deployment config, NOT generated from the
+# workbook. Holds the approved vocabulary (warning layer) + the target catalog, full-sync protected
+# set, skip_base_grants, the mask-exempt (ETL) principals, and the RLS entitlement table. Required,
+# from the reference_path widget only — never derived from config_path.
+from eastspring_uc_governance.validation import load_reference
+
+reference_path = dbutils.widgets.get("reference_path").strip()
+reference, reason = load_reference(reference_path)
+if reason:
+    raise ValueError(f"[reconcile] {reason} — set the reference_path widget")
 
 # ETL/pipeline identities added to EXCEPT on every column-mask policy so they read unmasked data.
 mask_exempt_principals = reference.get("mask_exempt_principals") or []
 print(f"[reconcile] config_source={config_path} | "
       f"rbac_view_grants={'yes' if 'rbac_view_grants' in docs else 'no'} | "
       f"rbac_views={'yes' if 'rbac_views' in docs else 'no'} | "
-      f"reference={'yes' if reference else 'no'} ({reference_path.name}) | "
+      f"reference={reference_path} | "
       f"mask_exempt_principals={mask_exempt_principals}")
 
 # COMMAND ----------
@@ -103,7 +104,7 @@ from eastspring_uc_governance.validation import validate_docs
 
 # Passing the reference adds fail-open warnings for any group / catalog.schema / tag key+value
 # the config uses but the allow-list does not list. Warnings are reported, never block.
-vres = validate_docs(docs, reference=reference or None)
+vres = validate_docs(docs, reference=reference)
 for issue in vres.sorted_issues():
     print(f"  {issue}")
 if not vres.ok:
@@ -139,12 +140,11 @@ print(f"[reconcile] target: {len(state.grants)} grants | {len(state.tags)} tags 
 # DBTITLE 1,Target catalog + target-state DataFrames
 from eastspring_uc_governance.reconcile import frames, scope
 
-# Target catalog: reference allow-list is the source of truth; a non-empty widget overrides it
-# for ad-hoc runs.
-target_catalog = dbutils.widgets.get("target_catalog").strip() or (reference.get("target_catalog") or "").strip()
+# Target catalog: the reference's `target_catalog`, and only that (no override) — the catalog a
+# run full-syncs is always the one its reference declares.
+target_catalog = str(reference.get("target_catalog") or "").strip()
 if not target_catalog:
-    raise ValueError("no target_catalog: set the widget or `target_catalog` in the reference allow-list")
-print(f"[reconcile] target_catalog source={'widget' if dbutils.widgets.get('target_catalog').strip() else 'reference'}")
+    raise ValueError(f"no target_catalog in the reference ({reference_path})")
 catalogs = [target_catalog]
 
 # Anything outside the target catalog is ignored by the diff — surface how much.
@@ -246,7 +246,7 @@ expected_views = sorted(view_specs)
 serving_schemas = sorted({".".join(v.split(".")[:2]) for v in expected_views})
 mode = dbutils.widgets.get("mode").strip()  # noqa: F821  (also read in the apply cell)
 
-# RLS allow-list (group -> rls_column) the semi-join filters on; from config/reference/<env>.yaml.
+# RLS allow-list (group -> rls_column) the semi-join filters on; from the reference (reference_path).
 rls_entitlement_table = reference.get("rls_entitlement_table")
 rls_group_column = reference.get("rls_group_column", "ad_group")
 

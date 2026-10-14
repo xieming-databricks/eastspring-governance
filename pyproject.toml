@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eastspring-uc-governance"
-version = "0.1.0"
+version = "0.2.0"
 description = "YAML-driven Unity Catalog governance: validate -> compile -> reconcile -> apply (grants, tags, ABAC column masks, dynamic RLS views) + CLI provisioning."
 readme = { text = "See the repository README / CONTRACT.md for the YAML contract.", content-type = "text/plain" }
 requires-python = ">=3.10"

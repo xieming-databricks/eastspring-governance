@@ -199,10 +199,10 @@ Review and commit the diff.
 #### 5. (CI/CD + Local) Validate the generated YAML
 
 ```bash
-python -m framework.validation.cli config/esg      # add -v to list every check performed
+ucgov-validate config/esg --reference config/reference/esg.yaml   # add -v to list every check performed
 ```
 
-Fail-closed JSON-Schema + semantic validation of `config/esg`. Exit `0` when there are no issues, `1` otherwise.
+Fail-closed JSON-Schema + semantic validation of `config/esg`, plus the reference allow-list check (groups / schemas / data products / tags). `--reference` is required; a missing or unreadable reference file is an error. Exit `0` when there are no issues, `1` otherwise — warnings fail too, unless `--skip-warning` is given.
 
 This process is expected to happen in three places:
  - Local machine of develop for a quick offline check
@@ -217,12 +217,13 @@ Run **`notebooks/reconcile.py`** with widgets:
 
 - `config_path` → the workspace path to `config/esg`
   (e.g. `/Workspace/Users/<you>/eastspring-governance/config/esg`).
-- `target_catalog` → **leave blank** to use the reference allow-list's `target_catalog`
-  (the source of truth); set it only to override for an ad-hoc run.
+- `reference_path` → **required**: the workspace path to the reference allow-list
+  (e.g. `/Workspace/Users/<you>/eastspring-governance/config/reference/esg.yaml`). It is never
+  derived from `config_path`; empty / missing / unreadable stops the notebook before anything runs.
 - `mode` → **`plan`** (default).
 
 In `plan` mode the notebook:
-1. Loads `config/esg` + the sibling reference allow-list (`config/reference/esg.yaml`).
+1. Loads `config/esg` (`config_path`) + the reference allow-list (`reference_path`).
 2. **Re-validates** the config (fail-closed; raises on error) and reports reference warnings (fail-open).
 3. Compiles → target state (grants / tags / policies + referenced objects), reads **live** state from `information_schema` (+ `SHOW POLICIES`), and emits a **per-dimension delta** (ADD / REMOVE / CHANGE) honoring the **protected set** (deployer + `admin_groups` + protected schemas, never REMOVE).
 4. **Previews** the dynamic-view DDL and the grant/tag/policy SQL — **executes nothing**.
