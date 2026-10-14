@@ -1,0 +1,144 @@
+# eastspring-uc-governance — test, build, publish the wheel; upload it + the notebooks to Databricks.
+
+trigger:
+  - main
+
+variables:
+  - group: DEV-HERA-REPLATFORM        # must define: adb (workspace URL), accessToken (secret)
+  - name: cliVersion
+    value: 1.19.0
+  - name: wheelVolume                 # must match the notebooks' wheel_path widget
+    value: /Volumes/hera-dev/governance/wheels
+  - name: notebookFolder
+    value: /Workspace/Users/xieming.li@eastspring.com/notebooks
+
+pool:
+  name: sgesss-nprd-dev
+
+steps:
+- powershell: |
+    function Log($m)  { Write-Host "##[section][$(Get-Date -Format 'HH:mm:ss')] $m" }
+    function Fail($m) { Write-Host "##vso[task.logissue type=error]$m"; exit 1 }
+
+    Log "Test venv"
+    if (Test-Path ucgov_venv_test) { Write-Host "reusing ucgov_venv_test" }
+    else { python -m venv ucgov_venv_test; Write-Host "created ucgov_venv_test" }
+    .\ucgov_venv_test\Scripts\Activate.ps1
+    $env:PYSPARK_PYTHON = (Get-Command python).Source
+    $env:PYSPARK_DRIVER_PYTHON = $env:PYSPARK_PYTHON
+
+    Log "Environment"
+    Write-Host "python         : $(python --version)"
+    Write-Host "python path    : $env:PYSPARK_PYTHON"
+    Write-Host "java           : $((java --version | Select-Object -First 1))"
+    Write-Host "JAVA_HOME      : $env:JAVA_HOME"
+    Write-Host "commit         : $(Build.SourceVersion)"
+
+    Log "Install package + dev,spark extras"
+    Write-Host "##[group]pip install output"
+    python -m pip install -e ".[dev,spark]"
+    $rc = $LASTEXITCODE
+    Write-Host "##[endgroup]"
+    if ($rc -ne 0) { Fail "pip install failed (exit $rc)" }
+    Write-Host "installed      : $((python -m pip show eastspring-uc-governance | Select-String '^Version').ToString())"
+    Write-Host "pyspark        : $((python -m pip show pyspark | Select-String '^Version').ToString())"
+
+    Log "Run tests"
+    python -m pytest tests/ --cov=eastspring_uc_governance --cov-report=term-missing
+    if ($LASTEXITCODE -ne 0) { Fail "tests failed (exit $LASTEXITCODE)" }
+    Log "Tests passed"
+  displayName: '1. Python Tests + Coverage'
+
+- powershell: |
+    function Log($m)  { Write-Host "##[section][$(Get-Date -Format 'HH:mm:ss')] $m" }
+    function Fail($m) { Write-Host "##vso[task.logissue type=error]$m"; exit 1 }
+
+    Log "Clean build/ dist/ ucgov_venv"
+    Remove-Item -Recurse -Force build, dist, ucgov_venv -ErrorAction SilentlyContinue
+
+    Log "Fresh build venv"
+    python -m venv ucgov_venv
+    .\ucgov_venv\Scripts\Activate.ps1
+    Write-Host "##[group]pip upgrade output"
+    python -m pip install --upgrade pip setuptools wheel
+    Write-Host "##[endgroup]"
+
+    $out = "$(Build.ArtifactStagingDirectory)\dist"
+    Log "Build wheel -> $out"
+    Write-Host "##[group]pip wheel output"
+    python -m pip wheel . --no-deps -w $out
+    $rc = $LASTEXITCODE
+    Write-Host "##[endgroup]"
+    if ($rc -ne 0) { Fail "wheel build failed (exit $rc)" }
+
+    $whl = Get-ChildItem "$out\*.whl"
+    if (-not $whl) { Fail "no .whl found in $out" }
+    $whl | ForEach-Object { Write-Host ("built          : {0} ({1:N0} KB)" -f $_.Name, ($_.Length / 1KB)) }
+    Log "Wheel built"
+  displayName: '2. Build the Wheel'
+
+- task: PublishPipelineArtifact@1
+  displayName: '3. Publish Pipeline Artifact'
+  inputs:
+    targetPath: '$(Build.ArtifactStagingDirectory)\dist'
+    artifact: wheels
+
+- powershell: |
+    function Log($m)  { Write-Host "##[section][$(Get-Date -Format 'HH:mm:ss')] $m" }
+    function Fail($m) { Write-Host "##vso[task.logissue type=error]$m"; exit 1 }
+
+    $dir = "$(Agent.ToolsDirectory)\databricks-cli\$(cliVersion)"
+    Log "Databricks CLI $(cliVersion) -> $dir"
+    if (Test-Path "$dir\databricks.exe") {
+      Write-Host "already cached on this agent — skipping download"
+    } else {
+      $url = "https://github.com/databricks/cli/releases/download/v$(cliVersion)/databricks_cli_$(cliVersion)_windows_amd64.zip"
+      $zip = "$(Agent.TempDirectory)\databricks.zip"
+      Write-Host "downloading    : $url"
+      Invoke-WebRequest -Uri $url -OutFile $zip
+      Expand-Archive $zip -DestinationPath $dir -Force
+      Write-Host "extracted to   : $dir"
+    }
+    if (-not (Test-Path "$dir\databricks.exe")) { Fail "databricks.exe not found in $dir" }
+    Write-Host "##vso[task.prependpath]$dir"
+    Write-Host "added to PATH for later steps"
+    Write-Host "version        : $(& "$dir\databricks.exe" version)"
+    Log "CLI ready"
+  displayName: '4. Install Databricks CLI $(cliVersion)'
+
+- powershell: |
+    function Log($m)  { Write-Host "##[section][$(Get-Date -Format 'HH:mm:ss')] $m" }
+    function Fail($m) { Write-Host "##vso[task.logissue type=error]$m"; exit 1 }
+
+    Log "Connection"
+    Write-Host "workspace      : $env:DATABRICKS_HOST"
+    Write-Host "cli            : $(Get-Command databricks | Select-Object -ExpandProperty Source)"
+    $me = databricks current-user me -o json | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0) { Fail "authentication failed — check adb / accessToken" }
+    Write-Host "running as     : $($me.userName) (id $($me.id))"
+
+    $whl = Get-ChildItem "$(Build.ArtifactStagingDirectory)\dist\*.whl" | Select-Object -First 1
+    $target = "dbfs:$(wheelVolume)/$($whl.Name)"
+    Log "Upload wheel"
+    Write-Host "from           : $($whl.FullName)"
+    Write-Host "to             : $target"
+    databricks fs cp $whl.FullName $target --overwrite
+    if ($LASTEXITCODE -ne 0) { Fail "wheel upload failed (exit $LASTEXITCODE)" }
+    Write-Host "##[group]files now in $(wheelVolume)"
+    databricks fs ls "dbfs:$(wheelVolume)"
+    Write-Host "##[endgroup]"
+
+    Log "Deploy notebooks"
+    Write-Host "from           : notebooks\ ($((Get-ChildItem notebooks -File).Name -join ', '))"
+    Write-Host "to             : $(notebookFolder)"
+    databricks workspace import-dir notebooks "$(notebookFolder)" --overwrite
+    if ($LASTEXITCODE -ne 0) { Fail "notebook deploy failed (exit $LASTEXITCODE)" }
+    Write-Host "##[group]objects now in $(notebookFolder)"
+    databricks workspace list "$(notebookFolder)"
+    Write-Host "##[endgroup]"
+
+    Log "Done: $($whl.Name) + notebooks deployed"
+  displayName: '5. Upload Wheel + Deploy Notebooks'
+  env:
+    DATABRICKS_HOST: $(adb)
+    DATABRICKS_TOKEN: $(accessToken)
