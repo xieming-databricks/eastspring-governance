@@ -1,0 +1,37 @@
+schema_version: '1.0'
+grant_rules:
+- rule_id: RBAC001
+  groups:
+  - hera-all-esg-read-masked
+  bundle: READ
+  include:
+  - type: schema
+    name: hera-dev.dm_esg
+- rule_id: RBAC002
+  groups:
+  - hera-all-esg-read-unmasked
+  bundle: READ
+  include:
+  - type: schema
+    name: hera-dev.dm_esg
+- rule_id: RBAC003
+  groups:
+  - hera-sg-eq-read-masked
+  bundle: READ
+  include:
+  - type: schema
+    name: hera-dev.dm_esg
+- rule_id: RBAC004
+  groups:
+  - hera-sg-esg-read-masked
+  bundle: READ
+  include:
+  - type: schema
+    name: hera-dev.dm_esg
+- rule_id: RBAC005
+  groups:
+  - hera-sg-fi-read-masked
+  bundle: READ
+  include:
+  - type: schema
+    name: hera-dev.dm_esg

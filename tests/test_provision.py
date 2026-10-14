@@ -239,3 +239,53 @@ def test_resolve_accepts_wrapped_or_bare_group(calls, resp):
     calls.reply = lambda cmd: _Proc(stdout=json.dumps(resp))
     resolve = [a for a in planner.plan_groups(_GROUPS_REF, []) if a.status == RESOLVE]
     assert cli_runner.execute(resolve, dry_run=False)[0]["status"] == "SUCCEEDED"
+
+
+# ---- cli: --reference is required and never guessed ---------------------
+
+def test_cli_requires_reference(capsys):
+    """ucgov-provision refuses to run without --reference (no --env / --config-root guessing).
+
+    Expected: argparse exits with code 2 for both subcommands and the error names --reference.
+    """
+    from eastspring_uc_governance.provision.cli import main
+    for sub in ("groups", "schemas"):
+        with pytest.raises(SystemExit) as exc:
+            main([sub])
+        assert exc.value.code == 2
+        assert "--reference" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("content", [None, "groups: [unclosed\n", "- just\n- a list\n"],
+                         ids=["missing", "unparseable", "not_a_mapping"])
+def test_cli_bad_reference_fails_before_any_cli_call(tmp_path, calls, capsys, content):
+    """A --reference file that is missing, isn't valid YAML, or isn't a mapping stops provisioning
+    before the databricks CLI is called.
+
+    Expected: exit code 1, a "reference allow-list" message, and no CLI invocation.
+    """
+    from eastspring_uc_governance.provision.cli import main
+    ref = tmp_path / "esg.yaml"
+    if content is not None:
+        ref.write_text(content)
+    assert main(["schemas", "--reference", str(ref)]) == 1
+    assert "reference allow-list" in capsys.readouterr().out
+    assert calls == []
+
+
+def test_cli_plans_from_the_given_reference(tmp_path, calls, capsys):
+    """ucgov-provision reads exactly the --reference file it is given.
+
+    Expected: exit code 0; schemas are listed in that file's target_catalog, and its governance +
+    serving schemas are planned.
+    """
+    import yaml
+    from eastspring_uc_governance.provision.cli import main
+    ref = tmp_path / "anywhere" / "custom-name.yaml"
+    ref.parent.mkdir()
+    ref.write_text(yaml.safe_dump(_REF))
+    calls.reply = lambda cmd: _Proc(stdout="[]")
+    assert main(["schemas", "--reference", str(ref)]) == 0
+    assert calls[0][1:4] == ["schemas", "list", "testcat"]
+    out = capsys.readouterr().out
+    assert "testcat.gov" in out and "testcat.serving" in out

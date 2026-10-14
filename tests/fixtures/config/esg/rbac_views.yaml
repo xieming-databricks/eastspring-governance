@@ -1,0 +1,28 @@
+schema_version: '1.0'
+views:
+- view: hera-dev.dm_esg.dim_fund
+  source: hera-dev.silver.dim_fund
+- view: hera-dev.dm_esg.dim_mandate
+  source: hera-dev.silver.dim_mandate
+- view: hera-dev.dm_esg.dim_portfolio
+  source: hera-dev.silver.dim_portfolio
+  rls_column: portfolio_code
+- view: hera-dev.dm_esg.dim_share_class
+  source: hera-dev.silver.dim_share_class
+- view: hera-dev.dm_esg.esg_engagement
+  source: hera-dev.gold.esg_engagement
+- view: hera-dev.dm_esg.esg_waci
+  source: hera-dev.gold.esg_waci
+- view: hera-dev.dm_esg.fact_esg_engagement
+  source: hera-dev.silver.fact_esg_engagement
+- view: hera-dev.dm_esg.fact_portfolio_position
+  source: hera-dev.silver.fact_portfolio_position
+  rls_column: portfolio_code
+- view: hera-dev.dm_esg.fact_portfolio_transaction
+  source: hera-dev.silver.fact_portfolio_transaction
+  rls_column: portfolio_code
+- view: hera-dev.dm_esg.fact_price
+  source: hera-dev.silver.fact_price
+- view: hera-dev.dm_something.fact_portfolio_position
+  source: hera-dev.silver.fact_portfolio_position
+  rls_column: portfolio_code

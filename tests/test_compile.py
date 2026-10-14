@@ -9,7 +9,7 @@ import yaml
 from eastspring_uc_governance.compile import compile_config
 from eastspring_uc_governance.compile.bundles import BundleError, expand_bundle
 
-REPO = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def S(privs):
@@ -256,15 +256,15 @@ def test_column_mask_policy_carries_definition_and_exempt():
     assert p.except_principals == "hera-etl-a,hera-etl-b"             # sorted, blanks dropped
 
 
-# ---- compile the real config/esg ----------------------------------------
+# ---- compile the ESG fixture config ---------------------------------------
 
 def test_compile_config_esg():
-    """The shipped config/esg compiles end to end.
+    """The ESG fixture config (tests/fixtures/config/esg) compiles end to end.
 
     Expected: state.ok, with non-empty grants, tags, policies and refs, and every policy name
     starting with acm_policy_.
     """
-    d = REPO / "config" / "esg"
+    d = FIXTURES / "config" / "esg"
     docs = {k: yaml.safe_load((d / f"{k}.yaml").read_text())
             for k in ("base_grants", "rbac_view_grants", "rbac_views", "tags", "policies", "labels")
             if (d / f"{k}.yaml").exists()}

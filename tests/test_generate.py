@@ -15,8 +15,8 @@ from eastspring_uc_governance.generate import generate_config, read_workbook
 from eastspring_uc_governance.generate.generator import GeneratorError, REQUIRED_SHEETS, write_config
 from eastspring_uc_governance.validation import validate_dir, validate_docs
 
-REPO = Path(__file__).resolve().parents[1]
-WORKBOOK = REPO / "aux_files" / "signed_off" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+WORKBOOK = FIXTURES / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"   # frozen copy of the v3 sign-off
 
 
 def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=None,
@@ -222,10 +222,9 @@ def test_referential_violations_raise(mutate):
 
 # ---- integration against the signed-off v3 workbook ---------------------
 
-@pytest.mark.skipif(not WORKBOOK.exists(), reason="v3 workbook not present")
 def test_real_v3_workbook_generates_valid_config():
-    """The signed-off v3 Access Matrix workbook generates a valid, compilable config with the
-    expected counts (skipped if the workbook is absent).
+    """The signed-off v3 Access Matrix workbook (frozen copy in tests/fixtures) generates a valid,
+    compilable config with the expected counts.
 
     Expected: valid and compilable; 10 labels, 7 base rules, 5 serving rules all on hera-dev.dm_esg,
     11 views (including dm_something.fact_portfolio_position, with RLS on

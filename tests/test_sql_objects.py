@@ -10,7 +10,7 @@ from importlib import resources
 
 from eastspring_uc_governance.sql_objects import render_sql_objects, sql_variables, unmasked_groups
 
-REPO = Path(__file__).resolve().parents[1]
+FIXTURE_REFERENCE = Path(__file__).resolve().parent / "fixtures" / "config" / "reference" / "esg.yaml"
 _REF = {"target_catalog": "testcat", "governance_schemas": ["testcat.gov"]}
 
 
@@ -60,13 +60,13 @@ def test_render_fills_every_placeholder_in_every_packaged_file():
         assert not sql.rstrip().endswith(";"), name                      # spark.sql: single statement
 
 
-def test_render_for_the_shipped_esg_reference():
-    """The group_portfolio_access MV renders correctly against the real config/reference/esg.yaml.
+def test_render_for_the_esg_fixture_reference():
+    """The group_portfolio_access MV renders correctly against the ESG fixture reference.
 
     Expected: the SQL creates `hera-dev`.`governance`.group_portfolio_access and reads from `hera-
     dev`.`governance`.entitlements.
     """
-    ref = yaml.safe_load((REPO / "config" / "reference" / "esg.yaml").read_text())
+    ref = yaml.safe_load(FIXTURE_REFERENCE.read_text())
     sql = dict(render_sql_objects(ref))["group_portfolio_access.sql"]
     assert "CREATE OR REPLACE MATERIALIZED VIEW `hera-dev`.`governance`.group_portfolio_access" in sql
     assert "FROM `hera-dev`.`governance`.entitlements" in sql
@@ -167,10 +167,10 @@ def test_multiline_placeholder_never_in_a_comment():
                     assert not line.lstrip().startswith("--") and "--" not in line.split("${unmasked_condition}")[0], (f.name, line)
 
 
-def test_shipped_esg_reference_unmasked_groups():
-    """The real config/reference/esg.yaml yields the expected unmasked groups.
+def test_esg_fixture_reference_unmasked_groups():
+    """The ESG fixture reference yields the expected unmasked groups.
 
     Expected: [hera-all-esg-read-unmasked, hera-all-admin-admin-unmasked].
     """
-    ref = yaml.safe_load((REPO / "config" / "reference" / "esg.yaml").read_text())
+    ref = yaml.safe_load(FIXTURE_REFERENCE.read_text())
     assert unmasked_groups(ref) == ["hera-all-esg-read-unmasked", "hera-all-admin-admin-unmasked"]

@@ -13,9 +13,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from eastspring_uc_governance.validation import check_reference, validate_dir, validate_docs
+from eastspring_uc_governance.validation import check_reference, load_reference, validate_dir, validate_docs
 
-REPO = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+ESG = FIXTURES / "config" / "esg"                          # ESG fixture config
+ESG_REFERENCE = FIXTURES / "config" / "reference" / "esg.yaml"   # ...and its reference allow-list
 
 
 def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: dict) -> Path:
@@ -24,6 +26,20 @@ def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: d
     (tmp / "tags.yaml").write_text(yaml.safe_dump(tags, sort_keys=False))
     (tmp / "labels.yaml").write_text(yaml.safe_dump(labels, sort_keys=False))
     return tmp
+
+
+def _config_with_unknown_group(tmp_path):
+    """A valid config granting to ghost-group, plus a reference that only approves ok-group.
+    Returns (config_dir, reference_path)."""
+    cfg = tmp_path / "esg"
+    cfg.mkdir()
+    g, p, t, l = _baseline()
+    g["grant_rules"][0]["groups"] = ["ghost-group"]
+    _write_config(cfg, g, p, t, l)
+    ref = tmp_path / "reference.yaml"
+    ref.write_text(yaml.safe_dump(
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
+    return cfg, ref
 
 
 def _baseline() -> tuple[dict, dict, dict, dict]:
@@ -70,7 +86,7 @@ def test_baseline_valid(tmp_path):
     Expected: validate_dir reports no issues (result.ok is True).
     """
     cfg = _write_config(tmp_path, *_baseline())
-    result = validate_dir(cfg)
+    result = validate_dir(cfg, reference={})          # schema-only: no reference file in tmp_path
     assert result.ok, "reported issues on the valid baseline:\n" + "\n".join(
         str(i) for i in result.sorted_issues()
     )
@@ -187,7 +203,7 @@ def test_data_product_label_validates(tmp_path):
         "labels": {"data_product": "investment_esg"},
     })
     cfg = _write_config(tmp_path, g, p, t, l)
-    assert validate_dir(cfg).ok
+    assert validate_dir(cfg, reference={}).ok        # schema-only: no reference file in tmp_path
 
 
 def test_labels_required(tmp_path):
@@ -374,23 +390,16 @@ def test_warnings_do_not_fail_validation():
     assert not result.errors
 
 
-def test_validate_dir_autoloads_sibling_reference(tmp_path):
-    """validate_dir finds config/reference/<dir>.yaml next to the config dir automatically; passing
-    reference={} turns the check off.
+def test_validate_dir_loads_reference_from_path(tmp_path):
+    """validate_dir loads the reference YAML from the path it is given; passing reference={} turns
+    the check off.
 
     Expected: the config stays valid with a warning about ghost-group, and no warnings at all with
     reference={}.
     """
-    cfg = tmp_path / "esg"
-    cfg.mkdir()
-    g, p, t, l = _baseline()
-    g["grant_rules"][0]["groups"] = ["ghost-group"]
-    _write_config(cfg, g, p, t, l)
-    (tmp_path / "reference").mkdir()
-    (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
+    cfg, ref = _config_with_unknown_group(tmp_path)
 
-    result = validate_dir(cfg)             # auto-discovers config/reference/esg.yaml
+    result = validate_dir(cfg, reference=ref)
     assert result.ok                       # schema-valid; only a warning
     assert any("ghost-group" in w.message for w in result.warnings)
 
@@ -399,11 +408,11 @@ def test_validate_dir_autoloads_sibling_reference(tmp_path):
 
 
 def test_esg_config_has_no_reference_warnings():
-    """The shipped config/esg is clean against its own reference allow-list.
+    """The ESG fixture config is clean against its reference allow-list.
 
     Expected: result.ok is True and there are no warnings.
     """
-    result = validate_dir(REPO / "config" / "esg")
+    result = validate_dir(ESG, reference=ESG_REFERENCE)
     assert result.ok
     assert result.warnings == []
 
@@ -411,17 +420,17 @@ def test_esg_config_has_no_reference_warnings():
 # ---- verbose 'what was checked' trace -----------------------------------
 
 def test_checks_recorded_for_clean_config():
-    """Verbose mode records each check performed on config/esg with its status.
+    """Verbose mode records each check performed on the ESG fixture config with its status.
 
     Expected: base_grants.yaml ok with a grant_rules count, rbac_views.yaml ok, schema_version ok,
     and reference ok.
     """
-    by_target = {c.target: c for c in validate_dir(REPO / "config" / "esg").checks}
+    by_target = {c.target: c for c in validate_dir(ESG, reference=ESG_REFERENCE).checks}
     assert by_target["base_grants.yaml"].status == "ok"
     assert "grant_rules=" in by_target["base_grants.yaml"].detail   # item counts surfaced
     assert by_target["rbac_views.yaml"].status == "ok"             # optional-but-present is checked
     assert by_target["schema_version"].status == "ok"
-    assert by_target["reference"].status == "ok"                   # auto-loaded, no warnings
+    assert by_target["reference"].status == "ok"                   # loaded, no warnings
 
 
 def test_checks_note_absent_optional(tmp_path):
@@ -459,15 +468,8 @@ def test_reference_check_status_is_warnings_when_offlist(tmp_path):
 
     Expected: the reference check's status is warnings.
     """
-    cfg = tmp_path / "esg"
-    cfg.mkdir()
-    g, p, t, l = _baseline()
-    g["grant_rules"][0]["groups"] = ["ghost-group"]
-    _write_config(cfg, g, p, t, l)
-    (tmp_path / "reference").mkdir()
-    (tmp_path / "reference" / "esg.yaml").write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
-    by_target = {c.target: c for c in validate_dir(cfg).checks}
+    cfg, ref = _config_with_unknown_group(tmp_path)
+    by_target = {c.target: c for c in validate_dir(cfg, reference=ref).checks}
     assert by_target["reference"].status == "warnings"
 
 
@@ -478,12 +480,51 @@ def test_cli_verbose_lists_checks(capsys):
     "reference:".
     """
     from eastspring_uc_governance.validation.cli import main
-    rc = main([str(REPO / "config" / "esg"), "--verbose"])
+    rc = main([str(ESG), "--reference", str(ESG_REFERENCE), "--verbose"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "checked" in out
     assert "vs grants.schema.yaml" in out           # per-file schema shown
     assert "reference:" in out                      # reference allow-list check shown
+
+
+def test_cli_requires_reference(capsys):
+    """The validation CLI refuses to run without --reference (it is never guessed from the path).
+
+    Expected: argparse exits with code 2 and the error names --reference.
+    """
+    from eastspring_uc_governance.validation.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main([str(ESG)])
+    assert exc.value.code == 2
+    assert "--reference" in capsys.readouterr().err
+
+
+def test_cli_fails_on_warnings_by_default(tmp_path, capsys):
+    """By default the validation CLI fails when there are warnings, even with no errors.
+
+    Expected: exit code 1, and the output names the unknown group and mentions --skip-warning.
+    """
+    from eastspring_uc_governance.validation.cli import main
+    cfg, ref = _config_with_unknown_group(tmp_path)
+    rc = main([str(cfg), "--reference", str(ref)])
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "'ghost-group' is not in the reference allow-list" in out
+    assert "--skip-warning" in out
+
+
+def test_cli_skip_warning_passes_with_only_warnings(tmp_path, capsys):
+    """With --skip-warning, warnings are still printed but don't fail the run.
+
+    Expected: exit code 0, and the warning for the unknown group is still in the output.
+    """
+    from eastspring_uc_governance.validation.cli import main
+    cfg, ref = _config_with_unknown_group(tmp_path)
+    rc = main([str(cfg), "--reference", str(ref), "--skip-warning"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "'ghost-group' is not in the reference allow-list" in out
 
 
 def test_skip_base_grants_must_be_boolean():
@@ -535,20 +576,77 @@ def test_yaml_syntax_error_is_reported(tmp_path, filename):
     assert {c.target: c for c in result.checks}[filename].status == "issues"
 
 
-def test_unparseable_reference_is_skipped(tmp_path):
-    """An auto-discovered reference file that isn't valid YAML is skipped rather than failing.
+def test_unparseable_reference_is_an_error(tmp_path):
+    """A reference file that isn't valid YAML fails validation.
 
-    Expected: the config still validates (ok) and the reference check status is skipped.
+    Expected: result.ok is False, with a "YAML parse error" error for esg.yaml and the reference
+    check status missing.
     """
-    cfg = tmp_path / "esg"
-    cfg.mkdir()
-    _write_config(cfg, *_baseline())
-    (tmp_path / "reference").mkdir()
-    (tmp_path / "reference" / "esg.yaml").write_text("groups: [unclosed\n")
-    result = validate_dir(cfg)
-    assert result.ok
-    assert {c.target: c for c in result.checks}["reference"].status == "skipped"
+    cfg = _write_config(tmp_path, *_baseline())
+    ref = tmp_path / "esg.yaml"
+    ref.write_text("groups: [unclosed\n")
+    result = validate_dir(cfg, reference=ref)
+    assert not result.ok
+    assert [i.file for i in result.errors] == ["esg.yaml"]
+    assert "YAML parse error" in result.errors[0].message
+    assert {c.target: c for c in result.checks}["reference"].status == "missing"
 
+
+def test_missing_reference_file_is_an_error(tmp_path):
+    """A reference path that doesn't exist fails, instead of silently skipping the group / schema /
+    tag allow-list checks.
+
+    Expected: result.ok is False, with a "reference allow-list not found" error for esg.yaml and
+    the reference check status missing.
+    """
+    cfg = _write_config(tmp_path, *_baseline())
+    result = validate_dir(cfg, reference=tmp_path / "nope" / "esg.yaml")
+    assert not result.ok
+    assert [i.file for i in result.errors] == ["esg.yaml"]
+    assert "reference allow-list not found" in result.errors[0].message
+    assert {c.target: c for c in result.checks}["reference"].status == "missing"
+
+
+def test_no_reference_is_an_error(tmp_path):
+    """validate_dir without any reference fails: the allow-list is never guessed from the config
+    path (pass reference={} to deliberately validate schema-only).
+
+    Expected: result.ok is False, with exactly one "reference allow-list not provided" error and
+    the reference check status missing.
+    """
+    cfg = _write_config(tmp_path, *_baseline())
+    result = validate_dir(cfg)
+    assert not result.ok
+    assert [i.message for i in result.errors] == [
+        "reference allow-list not provided (pass the reference YAML, e.g. reference/esg.yaml)"]
+    assert {c.target: c for c in result.checks}["reference"].status == "missing"
+
+
+@pytest.mark.parametrize("path", ["", "   "])
+def test_load_reference_rejects_empty_path(path):
+    """load_reference with an empty path is an error, not the current directory.
+
+    Expected: (None, "reference allow-list path is empty").
+    """
+    assert load_reference(path) == (None, "reference allow-list path is empty")
+
+
+def test_load_reference_rejects_a_directory(tmp_path):
+    """load_reference given a directory (e.g. the config dir by mistake) is an error.
+
+    Expected: no reference, and a "not found" reason.
+    """
+    ref, reason = load_reference(tmp_path)
+    assert ref is None and "reference allow-list not found" in reason
+
+
+def test_load_reference_loads_the_fixture():
+    """load_reference loads a valid reference YAML from an explicit path.
+
+    Expected: a dict with target_catalog hera-dev, and no reason.
+    """
+    ref, reason = load_reference(ESG_REFERENCE)
+    assert reason is None and ref["target_catalog"] == "hera-dev"
 
 def test_validate_docs_reports_missing_document():
     """validate_docs, given in-memory documents, reports a required document that wasn't supplied.
