@@ -1,0 +1,20 @@
+{
+  "name": "ucgov-apply-functions",
+  "description": "CREATE OR REPLACE the packaged mask UDFs + group_portfolio_access MV (notebooks/apply_functions.py). mode=plan changes nothing. Managed by azure-pipelines.yml - edits in the UI are overwritten on the next deploy.",
+  "max_concurrent_runs": 1,
+  "parameters": [
+    { "name": "reference_path", "default": "" },
+    { "name": "mode",           "default": "plan" },
+    { "name": "wheel_path",     "default": "__WHEEL_PATH__" }
+  ],
+  "tasks": [
+    {
+      "task_key": "apply_functions",
+      "notebook_task": {
+        "notebook_path": "__NOTEBOOK_FOLDER__/apply_functions",
+        "source": "WORKSPACE"
+      }
+    }
+  ],
+  "tags": { "app": "eastspring-uc-governance", "managed_by": "azure-pipelines" }
+}

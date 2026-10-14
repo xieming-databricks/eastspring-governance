@@ -34,7 +34,7 @@
 # COMMAND ----------
 
 dbutils.widgets.text("wheel_path",
-                     "/Workspace/Users/xieming.li@eastspring.com/notebooks/eastspring_uc_governance-0.2.0-py3-none-any.whl")
+                     "/Workspace/Users/xieming.li@eastspring.com/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])

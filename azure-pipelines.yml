@@ -145,3 +145,52 @@ steps:
   env:
     DATABRICKS_HOST: $(adb)
     DATABRICKS_TOKEN: $(accessToken)
+
+- powershell: |
+    function Log($m)  { Write-Host "##[section][$(Get-Date -Format 'HH:mm:ss')] $m" }
+    function Fail($m) { Write-Host "##vso[task.logissue type=error]$m"; exit 1 }
+
+    $whl = Get-ChildItem "$(Build.ArtifactStagingDirectory)\dist\*.whl" | Select-Object -First 1
+    if (-not $whl) { Fail "no .whl in $(Build.ArtifactStagingDirectory)\dist" }
+    $wheelPath = "$(wheelFolder)/$($whl.Name)"
+
+    # jobs/*.json are the job definitions; the placeholders are filled in here. A job is matched
+    # by name: created if missing, otherwise its settings are replaced (jobs reset) — so the job id
+    # stays the same across deploys.
+    foreach ($file in Get-ChildItem jobs\*.json) {
+      $json = (Get-Content $file.FullName -Raw).Replace('__NOTEBOOK_FOLDER__', "$(notebookFolder)").Replace('__WHEEL_PATH__', $wheelPath)
+      $job  = $json | ConvertFrom-Json
+      $name = $job.name
+      Log "Job $name ($($file.Name))"
+      Write-Host "notebook       : $($job.tasks[0].notebook_task.notebook_path)"
+      Write-Host "wheel_path     : $wheelPath"
+
+      $raw = databricks jobs list --name $name -o json | Out-String
+      if ($LASTEXITCODE -ne 0) { Fail "could not list jobs (exit $LASTEXITCODE)" }
+      # flatten to a plain list of jobs: works for "[]", empty output, one job or many (PS 5.1 + 7)
+      $found = @()
+      if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        $found = @(@($raw | ConvertFrom-Json) | ForEach-Object { $_ } | Where-Object { $_.job_id })
+      }
+      if ($found.Count -gt 1) { Fail "$($found.Count) jobs are named '$name' — delete the extras (ids: $($found.job_id -join ', '))" }
+
+      if ($found.Count -eq 1) {
+        $jobId = $found[0].job_id
+        "{""job_id"": $jobId, ""new_settings"": $json}" | Set-Content -Encoding ascii job.json
+        databricks jobs reset --json "@job.json"
+        if ($LASTEXITCODE -ne 0) { Fail "jobs reset failed for '$name' (exit $LASTEXITCODE)" }
+        Write-Host "updated        : job $jobId"
+      } else {
+        $json | Set-Content -Encoding ascii job.json
+        $jobId = (databricks jobs create --json "@job.json" -o json | ConvertFrom-Json).job_id
+        if ($LASTEXITCODE -ne 0 -or -not $jobId) { Fail "jobs create failed for '$name' (exit $LASTEXITCODE)" }
+        Write-Host "created        : job $jobId"
+      }
+      Write-Host "job page       : $env:DATABRICKS_HOST/jobs/$jobId"
+    }
+    Remove-Item job.json -ErrorAction SilentlyContinue
+    Log "Jobs deployed"
+  displayName: '6. Create / Update Databricks Jobs'
+  env:
+    DATABRICKS_HOST: $(adb)
+    DATABRICKS_TOKEN: $(accessToken)
