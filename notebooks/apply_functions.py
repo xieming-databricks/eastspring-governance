@@ -10,26 +10,18 @@
 # MAGIC The target governance schema must already exist (`ucgov-provision schemas`, or seed / Terraform).
 # MAGIC The `group_portfolio_access` MV needs **serverless** compute.
 # MAGIC
-# MAGIC **Widgets:** `wheel_path` (the wheel in the workspace), `reference_path` (required — the env's
-# MAGIC reference YAML, e.g. `.../configs/reference/esg.yaml`; empty / missing / unreadable stops the
-# MAGIC notebook), `mode` = `plan` (default; prints the SQL, runs nothing) | `apply`.
+# MAGIC **Widgets:** `reference_path` (required — the env's reference YAML, e.g.
+# MAGIC `.../reference/esg.yaml`; empty / missing / unreadable stops the notebook), `mode` = `plan`
+# MAGIC (default; prints the SQL, runs nothing) | `apply`.
+# MAGIC
+# MAGIC **Package:** `eastspring-uc-governance` comes from the **job's environment** (the wheel is a
+# MAGIC dependency there, set by the deploy pipeline), so the notebook installs nothing itself. To run it
+# MAGIC by hand, add the deployed wheel as a dependency in the notebook's **Environment** panel.
 
 # COMMAND ----------
 
-dbutils.widgets.text("wheel_path",
-                     "/Workspace/Users/xieming.li@eastspring.com/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
-
-wheel_path = dbutils.widgets.get("wheel_path").strip()
-
-# COMMAND ----------
-
-# MAGIC %pip install "$wheel_path"
-
-# COMMAND ----------
-
-dbutils.library.restartPython()   # clears Python state — widgets are re-read below
 
 # COMMAND ----------
 

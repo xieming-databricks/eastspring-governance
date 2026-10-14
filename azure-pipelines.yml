@@ -154,16 +154,17 @@ steps:
     if (-not $whl) { Fail "no .whl in $(Build.ArtifactStagingDirectory)\dist" }
     $wheelPath = "$(wheelFolder)/$($whl.Name)"
 
-    # jobs/*.json are the job definitions; the placeholders are filled in here. A job is matched
-    # by name: created if missing, otherwise its settings are replaced (jobs reset) — so the job id
-    # stays the same across deploys.
+    # jobs/*.json are the job definitions; the placeholders are filled in here. The wheel goes into
+    # each job's serverless environment (dependencies), so the job installs it before the notebook
+    # starts. A job is matched by name: created if missing, otherwise its settings are replaced
+    # (jobs reset) — so the job id stays the same across deploys.
     foreach ($file in Get-ChildItem jobs\*.json) {
       $json = (Get-Content $file.FullName -Raw).Replace('__NOTEBOOK_FOLDER__', "$(notebookFolder)").Replace('__WHEEL_PATH__', $wheelPath)
       $job  = $json | ConvertFrom-Json
       $name = $job.name
       Log "Job $name ($($file.Name))"
       Write-Host "notebook       : $($job.tasks[0].notebook_task.notebook_path)"
-      Write-Host "wheel_path     : $wheelPath"
+      Write-Host "environment    : $($job.environments[0].environment_key) -> $($job.environments[0].spec.dependencies -join ', ')"
 
       $raw = databricks jobs list --name $name -o json | Out-String
       if ($LASTEXITCODE -ne 0) { Fail "could not list jobs (exit $LASTEXITCODE)" }

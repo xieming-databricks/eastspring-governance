@@ -1,8 +1,8 @@
 """Provision account groups + env schemas via the databricks CLI (the CLI alternative to terraform/).
 
-    ucgov-provision groups  --reference configs/reference/esg.yaml --profile <workspace-profile>            # plan
-    ucgov-provision groups  --reference configs/reference/esg.yaml --profile <workspace-profile> --apply    # execute
-    ucgov-provision schemas --reference configs/reference/esg.yaml --profile <workspace-profile> [--apply]
+    ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile>            # plan
+    ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile> --apply    # execute
+    ucgov-provision schemas --reference reference/esg.yaml --profile <workspace-profile> [--apply]
 
 (`ucgov-provision` is the installed entry point; `python -m eastspring_uc_governance.provision.cli`
 is equivalent.) Both subcommands read the reference YAML given by --reference — required, never
@@ -97,7 +97,7 @@ def _schemas(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--reference", required=True, metavar="PATH",
-                        help="the reference YAML to provision from, e.g. configs/reference/esg.yaml")
+                        help="the reference YAML to provision from, e.g. reference/esg.yaml")
     common.add_argument("--profile", help="WORKSPACE-level CLI profile (default: CLI default)")
     common.add_argument("--apply", action="store_true", help="execute (default: plan only)")
 

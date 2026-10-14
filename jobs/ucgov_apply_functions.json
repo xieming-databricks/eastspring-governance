@@ -5,8 +5,7 @@
   "queue": { "enabled": true },
   "parameters": [
     { "name": "reference_path", "default": "" },
-    { "name": "mode",           "default": "plan" },
-    { "name": "wheel_path",     "default": "__WHEEL_PATH__" }
+    { "name": "mode",           "default": "plan" }
   ],
   "tasks": [
     {
@@ -14,6 +13,16 @@
       "notebook_task": {
         "notebook_path": "__NOTEBOOK_FOLDER__/apply_functions",
         "source": "WORKSPACE"
+      },
+      "environment_key": "ucgov"
+    }
+  ],
+  "environments": [
+    {
+      "environment_key": "ucgov",
+      "spec": {
+        "environment_version": "3",
+        "dependencies": ["__WHEEL_PATH__"]
       }
     }
   ],

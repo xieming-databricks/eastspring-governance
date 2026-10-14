@@ -1,6 +1,6 @@
 """CLI for the Eastspring config validator.
 
-    python -m eastspring_uc_governance.validation.cli configs/esg --reference configs/reference/esg.yaml [--skip-warning]
+    python -m eastspring_uc_governance.validation.cli config/esg --reference reference/esg.yaml [--skip-warning]
 
 --reference (the allow-list of groups / schemas / data products / tags) is required: it is never
 guessed from the config path, and a missing or unreadable file is an error.

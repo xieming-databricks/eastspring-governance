@@ -6,8 +6,7 @@
   "parameters": [
     { "name": "config_path",    "default": "" },
     { "name": "reference_path", "default": "" },
-    { "name": "mode",           "default": "plan" },
-    { "name": "wheel_path",     "default": "__WHEEL_PATH__" }
+    { "name": "mode",           "default": "plan" }
   ],
   "tasks": [
     {
@@ -15,6 +14,16 @@
       "notebook_task": {
         "notebook_path": "__NOTEBOOK_FOLDER__/reconcile",
         "source": "WORKSPACE"
+      },
+      "environment_key": "ucgov"
+    }
+  ],
+  "environments": [
+    {
+      "environment_key": "ucgov",
+      "spec": {
+        "environment_version": "3",
+        "dependencies": ["__WHEEL_PATH__"]
       }
     }
   ],

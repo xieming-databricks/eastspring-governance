@@ -17,7 +17,7 @@
 # MAGIC `tags.yaml` / `policies.yaml` (+ optional `rbac_view_grants.yaml`, `rbac_views.yaml`).
 # MAGIC
 # MAGIC **`reference_path`** (required — never derived from `config_path`): the reference allow-list
-# MAGIC YAML, e.g. `.../configs/reference/esg.yaml`. Hand-curated per-deployment source of truth for
+# MAGIC YAML, e.g. `.../reference/esg.yaml`. Hand-curated per-deployment source of truth for
 # MAGIC the **`target_catalog`**, the
 # MAGIC **protected set** (`protected_principals` = `deployers` + `admin_groups`, plus
 # MAGIC `protected_schemas`), and the approved vocabulary (groups / schemas / governed_tags)
@@ -28,26 +28,15 @@
 # MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
 # MAGIC POLICY` — requires **ABAC-capable compute**).
 # MAGIC
-# MAGIC **`wheel_path`:** the `eastspring-uc-governance` wheel in the workspace; installed below
-# MAGIC (`%pip`), so the notebook needs no repo checkout — only the config dir at `config_path`.
+# MAGIC **Package:** `eastspring-uc-governance` comes from the **job's environment** (the wheel is a
+# MAGIC dependency there, set by the deploy pipeline), so the notebook installs nothing itself. To run it
+# MAGIC by hand, add the deployed wheel as a dependency in the notebook's **Environment** panel.
 
 # COMMAND ----------
 
-dbutils.widgets.text("wheel_path",
-                     "/Workspace/Users/xieming.li@eastspring.com/wheels/eastspring_uc_governance-0.2.0-py3-none-any.whl")
 dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
-
-wheel_path = dbutils.widgets.get("wheel_path").strip()
-
-# COMMAND ----------
-
-# MAGIC %pip install "$wheel_path"
-
-# COMMAND ----------
-
-dbutils.library.restartPython()   # clears Python state — every later cell re-reads its widgets
 
 # COMMAND ----------
 
