@@ -199,7 +199,9 @@ def calls(monkeypatch):
     """Record CLI invocations; each test sets ``calls.reply`` (cmd -> _Proc)."""
     recorded = type("Calls", (list,), {})()
 
-    def fake_run(cmd, capture_output, text):
+    def fake_run(cmd, capture_output, encoding, errors):
+        # the CLI's output must be decoded as UTF-8, never the OS code page (cp1252 on Windows)
+        assert capture_output and encoding == "utf-8" and errors == "replace"
         recorded.append(cmd)
         return recorded.reply(cmd)
 
@@ -404,3 +406,23 @@ def test_cli_tags_without_governed_tags_is_a_no_op(tmp_path, calls, capsys):
     ref.write_text("target_catalog: testcat\n")
     assert main(["tags", "--reference", str(ref)]) == 0
     assert calls == [] and "nothing to provision" in capsys.readouterr().out
+
+
+
+def test_cli_output_is_decoded_as_utf8_on_every_os(tmp_path, monkeypatch):
+    """The runner reads the CLI's output as UTF-8 whatever the OS code page: a governed tag whose
+    description has a curly quote (bytes E2 80 9D — 0x9d is undefined in cp1252, the Windows code
+    page) comes back intact through a real subprocess.
+
+    Expected: the payload can't be decoded as cp1252, yet list_tag_policies returns it intact.
+    """
+    import sys
+    payload = '[{"tag_key": "k", "description": "a \u201dquote\u201d"}]'.encode("utf-8")
+    with pytest.raises(UnicodeDecodeError):
+        payload.decode("cp1252")                 # what text=True alone does on a Windows agent
+    script = tmp_path / "fake_cli.py"
+    script.write_text(f"import sys\nsys.stdout.buffer.write({payload!r})\n", encoding="utf-8")
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run",       # the fake CLI, with the runner's own kwargs
+                        lambda cmd, **kw: real([sys.executable, str(script)], **kw))
+    assert cli_runner.list_tag_policies() == [{"tag_key": "k", "description": "a \u201dquote\u201d"}]

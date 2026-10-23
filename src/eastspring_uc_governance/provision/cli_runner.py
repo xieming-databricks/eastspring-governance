@@ -21,7 +21,10 @@ class CliError(RuntimeError):
 def run(argv: tuple[str, ...] | list[str], profile: str | None = None) -> Any:
     """Run one CLI command and return its parsed JSON output (None if it printed nothing)."""
     cmd = ["databricks", *argv, "-o", "json"] + (["--profile", profile] if profile else [])
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # The CLI writes UTF-8 (JSON with names / descriptions in any language). Decode it as UTF-8
+    # explicitly: text=True alone uses the OS code page — cp1252 on Windows — which can't decode
+    # every UTF-8 byte (e.g. 0x9d from "”") and loses the output.
+    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise CliError((proc.stderr or proc.stdout).strip() or f"exit code {proc.returncode}")
     out = proc.stdout.strip()
