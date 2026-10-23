@@ -65,12 +65,14 @@ rls_group_column: ad_group
 #               set   -> resolved (and provisioned) from Entra ID via AIM (`resolve-group-proxy`)
 #               null  -> created as a local Databricks account group (no Entra link)
 groups:
-  - { name: GSGEIS-hera-all-esg-read-unmasked, external_id: c7855984-0e29-4463-af86-d2103d1299d1 }
-  - { name: GSGEIS-hera-all-esg-read-masked,   external_id: 1f3f024b-61dc-4625-9921-cf3e164f681f }
-  - { name: GSGEIS-hera-sg-esg-read-masked,    external_id: c2ae0a3d-ae85-431d-ad59-d1b3e245ad10 }
-  - { name: GSGEIS-hera-sg-eq-read-masked,     external_id: 27888b59-c6a9-4cdb-a67f-7391ff654a67 }
-  - { name: GSGEIS-hera-sg-fi-read-masked,     external_id: 7af49fb7-690c-4861-be9e-fbd0579d9006 }
-  - { name: GSGEIS-hera-all-admin-admin-unmasked,     external_id: null }
+  # external_ids below: Entra object IDs in the DEV/TEST tenant dbdevfieldeng (bf465dc7…, Databricks
+  # account ccb842e7…). Eastspring's real IDs are in the configs repo's reference/esg.yaml.
+  - { name: GSGEIS-hera-all-esg-read-unmasked, external_id: b8695934-e0af-4ae4-b5c3-d6b8979865a4 }
+  - { name: GSGEIS-hera-all-esg-read-masked,   external_id: 3538af45-c737-4d3a-a0b8-ad922e98e4ae }
+  - { name: GSGEIS-hera-sg-esg-read-masked,    external_id: fc4d56dc-4c13-4d35-8d41-52d4fdc88a82 }
+  - { name: GSGEIS-hera-sg-eq-read-masked,     external_id: 618c8926-b799-48c9-85bd-a5d049eec33b }
+  - { name: GSGEIS-hera-sg-fi-read-masked,     external_id: 564034ba-1022-4d24-afc8-15ace2dd5e1e }
+  - { name: GSGEIS-hera-all-admin-admin-unmasked,     external_id: 67e79a57-9051-4663-9c04-b60fb2a49158 }
 
 # ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
 # governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.

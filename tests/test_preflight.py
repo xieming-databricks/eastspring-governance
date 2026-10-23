@@ -100,3 +100,24 @@ def test_rls_table_not_needed_without_rls_views():
     Expected: no warnings.
     """
     assert preflight.check_rls_table(None, None, group_column="ad_group", rls_columns=set()) == []
+
+
+# ---- serving schemas: provisioned, never created by reconcile ----------------
+
+def test_view_schemas_all_exist():
+    """Every schema the views go into exists -> nothing to report.
+
+    Expected: no warnings.
+    """
+    assert preflight.check_view_schemas(["c.dm_esg", "c.dm_esg", "c.dm_x"], {"c.dm_esg", "c.dm_x", "c.gold"}) == []
+
+
+def test_missing_view_schema_is_reported_once():
+    """A view schema that doesn't exist (not provisioned yet, or a workbook typo) is reported once,
+    pointing at ucgov-provision schemas — reconcile never creates it.
+
+    Expected: one view_schema_missing warning for c.dm_typo naming ucgov-provision schemas.
+    """
+    out = preflight.check_view_schemas(["c.dm_esg", "c.dm_typo", "c.dm_typo"], {"c.dm_esg"})
+    assert [(w["kind"], w["fqn"]) for w in out] == [("view_schema_missing", "c.dm_typo")]
+    assert "ucgov-provision schemas" in out[0]["reason"]

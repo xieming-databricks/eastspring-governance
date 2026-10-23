@@ -4,10 +4,12 @@
 state. Missing ones become warnings (they do not block the deltas).
 ``check_rls_table``: the RLS allow-list table exists with the columns the views semi-join on (the
 notebook stops an apply on these — every RLS view would fail).
+``check_view_schemas``: every schema a dynamic view goes into exists (reconcile never creates
+schemas; the notebook stops an apply on a missing one).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from ..compile.model import RefObject
 
@@ -82,3 +84,16 @@ def check_rls_table(table: str | None, columns: set[str] | None, *, group_column
              "origin": "reference.rls_group_column" if col == group_column else "rbac_views.rls_column",
              "reason": f"{table} has no column {col!r} (it has: {', '.join(sorted(have))})"}
             for col in [group_column, *sorted(rls_columns - {group_column})] if col.lower() not in have]
+
+
+def check_view_schemas(view_schemas: Iterable[str], existing_schemas: set[str]) -> list[Warning]:
+    """Every schema a dynamic view goes into (``catalog.schema``) must already exist. Reconcile
+    never creates schemas — they come from the reference via ``ucgov-provision schemas`` (the
+    platform pipeline) — so a missing one is reported (the notebook stops an apply on it: the
+    views in it would fail). Typically a schema not provisioned yet, or a typo in the workbook's
+    target_schema."""
+    return [{"kind": "view_schema_missing", "object_type": "schema", "fqn": s,
+             "origin": "rbac_views.view",
+             "reason": "not found — reconcile does not create schemas: add it to the reference's "
+                       "serving_schemas and run ucgov-provision schemas (the platform pipeline)"}
+            for s in sorted(set(view_schemas)) if s not in existing_schemas]

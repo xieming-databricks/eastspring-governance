@@ -233,14 +233,15 @@ show(warn_df)
 
 # COMMAND ----------
 
-# DBTITLE 1,Dynamic views — serving schema + CREATE OR REPLACE (RLS semi-join / pass-through)
+# DBTITLE 1,Dynamic views — CREATE OR REPLACE (RLS semi-join / pass-through) in the provisioned serving schemas
 # rbac_views.yaml lists the dynamic views the matrix expects (base table -> serving schema). We
-# DETECT missing serving schemas + views to create/drop and PREVIEW the DDL. Nothing runs here:
-# the apply cell runs these statements AFTER the masking phase — a new view is readable at once
-# through the serving schema's schema-level grant, so its columns' masks must already exist. In
-# mode=apply that ensures the serving schemas, CREATE OR REPLACEs every expected view (RLS
-# semi-join when rls_column is set, else pass-through) and DROPs live views in the serving
-# schemas that are not in the matrix. Idempotent (ensure-all).
+# DETECT views to create/drop and PREVIEW the DDL. Nothing runs here: the apply cell runs these
+# statements AFTER the masking phase — a new view is readable at once through the serving
+# schema's schema-level grant, so its columns' masks must already exist. In mode=apply that
+# CREATE OR REPLACEs every expected view (RLS semi-join when rls_column is set, else
+# pass-through) and DROPs live views in the serving schemas that are not in the matrix.
+# Idempotent (ensure-all). Schemas are NOT created here: they come from the reference via
+# ucgov-provision schemas (platform pipeline); a missing one stops an apply before any change.
 #
 # FUTURE WORK: the live-view read + ensure/drop list is built here in the notebook, unlike
 # grants/tags/policies which come from statement.plan_phase. Move it into the
@@ -291,9 +292,20 @@ for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
     except Exception as exc:  # missing catalog / no access — report and continue
         print(f"[views] could not read information_schema in {_cat}: {exc}")
 
+# Preflight: every serving schema must already exist (provisioned, never created by reconcile).
+schema_problems = preflight.check_view_schemas(serving_schemas, existing_schemas)
+print(f"[views] serving schemas expected: {serving_schemas} — "
+      f"{'all exist' if not schema_problems else f'{len(schema_problems)} missing'}")
+for _w in schema_problems:
+    print(f"[views] WARNING {_w['kind']}: {_w['fqn']} — {_w['reason']}")
+warnings.extend(schema_problems)
+if schema_problems and mode == "apply":
+    raise ValueError(f"[views] {len(schema_problems)} serving schema(s) missing: "
+                     f"{[w['fqn'] for w in schema_problems]} — run the platform pipeline "
+                     f"(ucgov-provision schemas) first; nothing applied")
+
 serving_live = {v for v in live_views if ".".join(v.split(".")[:2]) in serving_schemas}
 views_to_drop = sorted(serving_live - set(expected_views))
-print(f"[views] serving schemas expected: {serving_schemas}")
 print(f"[views] views to CREATE now ({len(set(expected_views) - live_views)}): "
       f"{sorted(set(expected_views) - live_views)}")
 if views_to_drop:
@@ -315,9 +327,7 @@ for v, sql in view_ddl:
 
 # (dimension, row, sql) triples for the apply cell's "views" phase (between masking and access)
 view_planned = (
-    [("views", {"change_type": "ENSURE", "securable_fqn": s},
-      "CREATE SCHEMA IF NOT EXISTS `{}`.`{}`".format(*s.split(".", 1))) for s in serving_schemas]
-    + [("views", {"change_type": "ENSURE", "securable_fqn": v}, sql) for v, sql in view_ddl]
+    [("views", {"change_type": "ENSURE", "securable_fqn": v}, sql) for v, sql in view_ddl]
     + [("views", {"change_type": "REMOVE", "securable_fqn": v}, _stmt.drop_view_statement(v))
        for v in views_to_drop])
 print(f"\n[views] {len(view_planned)} statement(s) — run by the apply cell, after the masking phase")

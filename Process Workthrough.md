@@ -236,7 +236,7 @@ Review the delta carefully. Note the **full-sync** semantics: any live grant in 
 #### 7. (CI/CD) Run the reconcile notebook in **apply** mode
 
 Re-run `notebooks/reconcile.py` with `mode = apply`. This executes:
-- **Dynamic views:** `CREATE OR REPLACE` every expected view (RLS semi-join when `rls_column` is set, else pass-through), creates missing serving schemas, and **drops** serving-schema views not in the matrix (ensure-all / idempotent).
+- **Dynamic views:** `CREATE OR REPLACE` every expected view (RLS semi-join when `rls_column` is set, else pass-through), and **drops** serving-schema views not in the matrix (ensure-all / idempotent). It does **not** create schemas: the serving schemas come from the reference via `ucgov-provision schemas` (platform pipeline); a missing one stops the apply before any change.
    - No matter if the view is updated or not, it will be re-created because there is no quick way to detect if the view is changed.
 - **Grants / tags / policies:** the delta as `GRANT` / `REVOKE` / `ALTER … SET/UNSET TAGS` /
   `CREATE OR REPLACE | DROP POLICY`.
