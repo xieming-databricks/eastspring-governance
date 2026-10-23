@@ -66,7 +66,7 @@ def load_sql_templates(sql_dir: str | Path) -> list[tuple[str, str]]:
                    key=lambda f: f.name)
     if not files:
         raise ValueError(f"no .sql files in {path}")
-    return [(f.name, f.read_text()) for f in files]
+    return [(f.name, f.read_text(encoding="utf-8")) for f in files]
 
 
 def render_sql(raw: str, values: dict[str, str]) -> str:

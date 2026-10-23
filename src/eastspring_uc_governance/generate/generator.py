@@ -268,9 +268,12 @@ _FILES = (("base_grants", "base_grants.yaml"), ("rbac_view_grants", "rbac_view_g
 
 
 def write_config(docs: Docs, out_dir: str | Path) -> Path:
-    """Serialize the docs dict to ``<out_dir>/{grants,labels,tags,policies}.yaml``."""
+    """Serialize the docs dict to ``<out_dir>/{grants,labels,tags,policies}.yaml``. Always UTF-8 with
+    LF line endings, so the files are byte-identical whichever OS generates them (Windows would
+    otherwise write CRLF, and a regenerated config would show every line as changed in git)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for short, fname in _FILES:
-        (out / fname).write_text(yaml.safe_dump(docs[short], sort_keys=False))
+        (out / fname).write_text(yaml.safe_dump(docs[short], sort_keys=False),
+                                 encoding="utf-8", newline="\n")
     return out

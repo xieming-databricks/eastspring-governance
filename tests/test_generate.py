@@ -394,9 +394,23 @@ def test_verify_ignores_crlf_line_endings(v3_cli, tmp_path):
     """
     out = tmp_path / "esg"
     v3_cli(["wb.xlsx", str(out)])
-    for f in out.glob("*.yaml"):
-        f.write_bytes(f.read_bytes().replace(b"\n", b"\r\n"))
+    for f in out.glob("*.yaml"):     # normalise first, so an existing \r\n never becomes \r\r\n
+        f.write_bytes(f.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n"))
     assert v3_cli(["wb.xlsx", str(out), "--verify"]) == 0
+
+
+def test_generated_files_are_utf8_with_lf_on_every_os(v3_cli, tmp_path):
+    """The generator writes the same bytes on every OS: LF line endings (no CR), UTF-8 — so a config
+    regenerated on Windows doesn't show every line as changed.
+
+    Expected: no b"\r" in any generated file, and every file decodes as UTF-8.
+    """
+    out = tmp_path / "esg"
+    v3_cli(["wb.xlsx", str(out)])
+    for f in out.glob("*.yaml"):
+        data = f.read_bytes()
+        assert b"\r" not in data, f.name
+        data.decode("utf-8")
 
 
 def test_check_and_verify_are_exclusive(v3_cli, tmp_path):

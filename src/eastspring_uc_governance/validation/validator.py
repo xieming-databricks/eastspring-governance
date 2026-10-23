@@ -205,7 +205,7 @@ def _build_registry(schema_dir: Path) -> Registry:
     """Load every *.schema.yaml into a referencing Registry keyed by $id."""
     registry = Registry()
     for path in sorted(schema_dir.glob("*.schema.yaml")):
-        resource = Resource.from_contents(yaml.safe_load(path.read_text()))
+        resource = Resource.from_contents(yaml.safe_load(path.read_text(encoding="utf-8")))
         registry = resource @ registry
     return registry
 
@@ -217,7 +217,7 @@ def _path_str(error) -> str:
 def _validate_one(filename: str, doc: Any, schema_dir: Path, registry: Registry) -> list[Issue]:
     """Validate one parsed doc against its schema, then run its semantic checks."""
     issues: list[Issue] = []
-    schema = yaml.safe_load((schema_dir / _ALL_FILE_SCHEMA[filename]).read_text())
+    schema = yaml.safe_load((schema_dir / _ALL_FILE_SCHEMA[filename]).read_text(encoding="utf-8"))
     validator = Draft202012Validator(schema, registry=registry)
     # Order isn't set here: ValidationResult.sorted_issues() sorts everything by (file, path).
     issues.extend(
@@ -480,7 +480,7 @@ def load_reference(ref_path: str | Path) -> tuple[dict[str, Any] | None, str | N
     if not ref_path.is_file():
         return None, f"reference allow-list not found: {ref_path}"
     try:
-        loaded = yaml.safe_load(ref_path.read_text())
+        loaded = yaml.safe_load(ref_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         return None, f"reference allow-list YAML parse error ({ref_path}): {exc}"
     if not isinstance(loaded, dict):
@@ -517,7 +517,7 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
             result.checks.append(Check(filename, "required file not found", "missing"))
             continue
         try:
-            doc = yaml.safe_load(path.read_text())
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
             result.issues.append(Issue(filename, "", f"YAML parse error: {exc}", "schema"))
             result.checks.append(Check(filename, "YAML parse", "issues"))
@@ -531,7 +531,7 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
             result.checks.append(Check(filename, "optional file, not present", "skipped"))
             continue
         try:
-            doc = yaml.safe_load(path.read_text())
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
             result.issues.append(Issue(filename, "", f"YAML parse error: {exc}", "schema"))
             result.checks.append(Check(filename, "YAML parse", "issues"))

@@ -29,7 +29,7 @@ def _differences(docs, out_dir: str | Path) -> list[str]:
             have = out / f.name
             if not have.is_file():
                 diffs.append(f"missing: {f.name}")
-            elif have.read_text() != f.read_text():
+            elif have.read_text(encoding="utf-8") != f.read_text(encoding="utf-8"):
                 diffs.append(f"changed: {f.name}")
         generated = {f.name for f in fresh.glob("*.yaml")}
     diffs += [f"extra:   {f.name} (not generated from the workbook)"
