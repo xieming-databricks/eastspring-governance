@@ -9,7 +9,7 @@
 # MAGIC `governance_schemas`, `groups`). Every object is applied **idempotently** (`CREATE OR REPLACE`),
 # MAGIC so re-running is a no-op.
 # MAGIC
-# MAGIC The target governance schema must already exist (`ucgov-provision schemas`, or seed / Terraform).
+# MAGIC The target governance schema must already exist (`ucgov-provision schemas`, the platform pipeline).
 # MAGIC The `group_portfolio_access` MV needs **serverless** compute.
 # MAGIC
 # MAGIC **Widgets:** `reference_path` (required — the env's reference YAML, e.g.

@@ -39,7 +39,7 @@
 
 # COMMAND ----------
 
-dbutils.widgets.text("config_path", "/Workspace/Users/xieming.li@databricks.com/eastspring-governance/config/esg")
+dbutils.widgets.text("config_path", "", "config folder, e.g. .../config/esg (required)")
 dbutils.widgets.text("reference_path", "", "reference allow-list YAML (required)")
 dbutils.widgets.dropdown("mode", "plan", ["plan", "apply"])
 
@@ -58,7 +58,10 @@ def show(df):
 from pathlib import Path
 import yaml
 
-config_path = Path(dbutils.widgets.get("config_path"))
+_config_path = dbutils.widgets.get("config_path").strip()   # required — never defaulted
+if not _config_path:
+    raise ValueError("[reconcile] config folder path is empty — set the config_path widget")
+config_path = Path(_config_path)
 # base_grants/labels/tags/policies are mandatory; labels.yaml holds asset labels for grant
 # matching (never materialized to UC).
 docs = {

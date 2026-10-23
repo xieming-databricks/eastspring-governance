@@ -12,8 +12,8 @@ per declared object:
 - ``plan_governed_tags(reference, live_tag_policies)`` — config/reference/<env>.yaml
     ``governed_tags`` (tag key -> allowed values) as tag policies: EXISTS | CREATE | UPDATE
 
-Additive only: an object that exists live but is no longer declared is never touched (unlike
-``terraform/``, which drops what is removed from the YAML). For governed tags that also means a
+Additive only: an object that exists live but is no longer declared is never touched — removing
+it from the YAML deletes nothing. For governed tags that also means a
 value is only ever added to a tag's allowed list, never removed, and a tag that accepts any value
 is never narrowed to a list — either could break existing tag assignments and the ABAC policies
 that match on them.
@@ -98,7 +98,7 @@ def plan_groups(reference: dict[str, Any], live_groups: list[dict[str, Any]]) ->
 
 def desired_schemas(reference: dict[str, Any]) -> list[str]:
     """governance_schemas + serving_schemas FQNs under target_catalog (source_schemas are
-    DE-owned base data, not provisioned). Same selection as ``terraform/workspace/main.tf``."""
+    DE-owned base data, not provisioned)."""
     catalog = reference.get("target_catalog") or ""
     wanted = list(reference.get("governance_schemas") or []) + list(reference.get("serving_schemas") or [])
     return sorted({s for s in wanted if catalog and s.startswith(f"{catalog}.")})

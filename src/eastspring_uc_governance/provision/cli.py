@@ -1,5 +1,4 @@
-"""Provision account groups, env schemas + governed tags via the databricks CLI (the CLI
-alternative to terraform/).
+"""Provision account groups, env schemas + governed tags via the databricks CLI.
 
     ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile>            # plan
     ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile> --apply    # execute

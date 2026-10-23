@@ -162,8 +162,8 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
 
     # ---- rbac_view_grants.yaml from the Rbac Views tab (serving-schema grants) -
     # End-user groups get their bundle on the serving SCHEMA (schema-grain include).
-    # The views inside that schema are produced by view generation (not implemented here);
-    # the schema itself is provisioned by Terraform.
+    # The views inside that schema come from rbac_views.yaml (built below from the Base Tables
+    # rows with a target_schema); the schema itself is provisioned by `ucgov-provision schemas`.
     rbac_rules: list[dict[str, Any]] = []
     _rbac_ids = [r["rule_id"] for r in wb.get(T_RBAC_VIEWS, []) if r.get("rule_id")]
     for dup in sorted({x for x in _rbac_ids if _rbac_ids.count(x) > 1}):

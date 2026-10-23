@@ -1,6 +1,6 @@
 """Provision the containers, identities + governed tags the framework needs, via the ``databricks`` CLI.
 
-The CLI alternative to ``terraform/``, with the same split and the same YAML contract:
+Everything is driven by the env's reference YAML:
 
 - **groups** (the reference's ``groups``): ``external_id`` set -> resolved from Entra ID via AIM;
   ``null`` -> a local Databricks account group. Done through the workspace-level IAM v2 proxy API,

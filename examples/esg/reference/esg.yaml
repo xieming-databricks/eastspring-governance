@@ -1,4 +1,8 @@
 schema_version: "1.0"
+# EXAMPLE reference (examples/esg) — a copy of the ESG deployment's reference for an empty DEV
+# workspace: every group's external_id is null, so `ucgov-provision groups` creates local account
+# groups and nothing depends on a particular Entra tenant. A real deployment keeps its own reference
+# (with the Entra object IDs) in the configs repo.
 # Reference allow-list (authoritative approved vocabulary) for this deployment (hera-dev / ESG).
 #
 # This is the single source of truth for the groups, schemas, data products, and governed tags
@@ -10,7 +14,7 @@ schema_version: "1.0"
 # ---- target catalog: the single catalog this deployment is authoritative over ---
 # Full-sync makes this catalog framework-owned: any grant in it the config does not
 # declare becomes a REMOVE (minus the protected set below). The reconcile notebook
-# takes the catalog from here only (there is no widget override).
+# reads this instead of a hand-typed widget default.
 target_catalog: hera-dev
 
 # ---- protected set: full-sync guardrails (never REMOVE / never touch) ------------
@@ -53,7 +57,7 @@ rls_entitlement_table: hera-dev.governance.group_portfolio_access
 rls_group_column: ad_group
 
 # ---- groups: the account groups THIS deployment's matrix may grant to, and how to provision them --
-# Provisioned per workspace (`ucgov-provision groups --reference <this file>`, through the
+# Provisioned per workspace (`ucgov-provision groups --env <env>`, through the
 # workspace-level IAM v2 proxy API — no account-level access needed). The groups themselves are
 # still account-level (usable in UC grants); an env that shares a group with another env lists it too.
 #
@@ -65,16 +69,14 @@ rls_group_column: ad_group
 #               set   -> resolved (and provisioned) from Entra ID via AIM (`resolve-group-proxy`)
 #               null  -> created as a local Databricks account group (no Entra link)
 groups:
-  # external_ids below: Entra object IDs in the DEV/TEST tenant dbdevfieldeng (bf465dc7…, Databricks
-  # account ccb842e7…). Eastspring's real IDs are in the configs repo's reference/esg.yaml.
-  - { name: GSGEIS-hera-all-esg-read-unmasked, external_id: b8695934-e0af-4ae4-b5c3-d6b8979865a4 }
-  - { name: GSGEIS-hera-all-esg-read-masked,   external_id: 3538af45-c737-4d3a-a0b8-ad922e98e4ae }
-  - { name: GSGEIS-hera-sg-esg-read-masked,    external_id: fc4d56dc-4c13-4d35-8d41-52d4fdc88a82 }
-  - { name: GSGEIS-hera-sg-eq-read-masked,     external_id: 618c8926-b799-48c9-85bd-a5d049eec33b }
-  - { name: GSGEIS-hera-sg-fi-read-masked,     external_id: 564034ba-1022-4d24-afc8-15ace2dd5e1e }
-  - { name: GSGEIS-hera-all-admin-admin-unmasked,     external_id: 67e79a57-9051-4663-9c04-b60fb2a49158 }
+  - { name: GSGEIS-hera-all-esg-read-unmasked, external_id: null }
+  - { name: GSGEIS-hera-all-esg-read-masked,   external_id: null }
+  - { name: GSGEIS-hera-sg-esg-read-masked,    external_id: null }
+  - { name: GSGEIS-hera-sg-eq-read-masked,     external_id: null }
+  - { name: GSGEIS-hera-sg-fi-read-masked,     external_id: null }
+  - { name: GSGEIS-hera-all-admin-admin-unmasked, external_id: null }
 
-# ---- schemas by role (all created by Terraform; the union is the approved-schema set) ----------
+# ---- schemas by role (governance + serving created by ucgov-provision schemas; the union is the approved-schema set)
 # governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.
 # source_schemas    : base tables live here — locked down; dynamic views READ from them.
 # serving_schemas   : dynamic views live here (end-users granted READ). A view's target_schema must

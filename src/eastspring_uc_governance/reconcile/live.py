@@ -13,10 +13,10 @@ grants ``(principal, privilege_type, securable_type, securable_fqn)``; tags
 ``(scope, policy_name, policy_type, function, except_principals)``. ``read_existing_objects``
 still returns a small driver-side set (referenced-object existence for preflight).
 
-NOTE (verify during e2e): exact column names of routine_privileges (``specific_*``), the
-``inherited_from`` sentinel value, and the ``abac_policy_definitions`` / ``DESCRIBE POLICY``
-columns (``abac_policy_definitions`` is Public Preview) are confirmed against the live
-workspace and adjusted if needed.
+NOTE: the ``abac_policy_definitions`` (Public Preview) and ``DESCRIBE POLICY`` reads were checked
+against a live workspace (2026-10); the routine_privileges column names (``specific_*``) and the
+``inherited_from`` sentinel value follow the documentation — re-check them if a release changes
+them.
 """
 from __future__ import annotations
 

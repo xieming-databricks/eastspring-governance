@@ -22,6 +22,8 @@ dist/
 
 # Editor / OS cruft
 .DS_Store
+# Office lock files (a workbook open in Excel)
+~$*
 .idea/
 .vscode/
 *.swp
@@ -31,24 +33,11 @@ dist/
 *.bak
 *~
 
-# Terraform (init cache, state, crash logs, tfvars). NOTE: .terraform.lock.hcl is intentionally
-# NOT ignored — commit it to pin provider versions/hashes for reproducible `terraform init`.
-**/.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
-crash.*.log
-*.tfvars
-*.tfvars.json
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraformrc
-terraform.rc
-
-
+# Local tooling / scratch folders
 .isaac/
 .claude/
-
+.databricks/
 aux_files/
+
+# Local-only working files (test references, scratch, moved-out copies) — never committed
+local/

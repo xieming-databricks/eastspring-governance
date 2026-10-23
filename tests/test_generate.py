@@ -340,3 +340,70 @@ def test_write_config_writes_all_six_files(tmp_path):
     for short in shorts:
         assert yaml.safe_load((out / f"{short}.yaml").read_text()) == docs[short], short
     assert validate_dir(out, reference={}).ok
+
+
+# ---- cli --verify: a committed config must match its workbook ----------------
+
+@pytest.fixture
+def v3_cli(monkeypatch):
+    """The generate CLI reading the v3 fixture workbook minus its when_* columns (as deleted in
+    Excel); returns cli.main."""
+    from eastspring_uc_governance.generate import cli
+    wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
+    wb["Masking Rules"] = [{k: v for k, v in r.items() if k not in ("when_key", "when_value")}
+                           for r in wb["Masking Rules"]]
+    monkeypatch.setattr(cli, "read_workbook", lambda path, sheets: wb)
+    return cli.main
+
+
+def test_verify_passes_right_after_generating(v3_cli, tmp_path, capsys):
+    """--verify on the folder the same workbook just generated reports it up to date, writing nothing.
+
+    Expected: generate exit 0, verify exit 0 with "is up to date", and no file changed by verify.
+    """
+    out = tmp_path / "esg"
+    assert v3_cli(["wb.xlsx", str(out)]) == 0
+    before = {f.name: f.read_text() for f in out.glob("*.yaml")}
+    assert v3_cli(["wb.xlsx", str(out), "--verify"]) == 0
+    assert "is up to date" in capsys.readouterr().out
+    assert {f.name: f.read_text() for f in out.glob("*.yaml")} == before
+
+
+def test_verify_fails_on_changed_missing_and_extra_files(v3_cli, tmp_path, capsys):
+    """--verify fails when the committed config differs from what the workbook generates, naming
+    each changed, missing and extra file, plus the command to regenerate.
+
+    Expected: exit 1; lines for tags.yaml changed, labels.yaml missing, stray.yaml extra.
+    """
+    out = tmp_path / "esg"
+    v3_cli(["wb.xlsx", str(out)])
+    (out / "tags.yaml").write_text("schema_version: '1.0'\ntags: []\n")
+    (out / "labels.yaml").unlink()
+    (out / "stray.yaml").write_text("x: 1\n")
+    capsys.readouterr()
+    assert v3_cli(["wb.xlsx", str(out), "--verify"]) == 1
+    text = capsys.readouterr().out
+    assert "is out of date" in text and "regenerate: ucgov-generate" in text
+    assert "changed: tags.yaml" in text and "missing: labels.yaml" in text and "extra:   stray.yaml" in text
+
+
+def test_verify_ignores_crlf_line_endings(v3_cli, tmp_path):
+    """A Windows checkout (CRLF) of an up-to-date config is still up to date.
+
+    Expected: exit 0 after rewriting every file with CRLF line endings.
+    """
+    out = tmp_path / "esg"
+    v3_cli(["wb.xlsx", str(out)])
+    for f in out.glob("*.yaml"):
+        f.write_bytes(f.read_bytes().replace(b"\n", b"\r\n"))
+    assert v3_cli(["wb.xlsx", str(out), "--verify"]) == 0
+
+
+def test_check_and_verify_are_exclusive(v3_cli, tmp_path):
+    """--check and --verify can't be combined (one only validates, the other compares).
+
+    Expected: argparse exits with code 2.
+    """
+    with pytest.raises(SystemExit) as exc:
+        v3_cli(["wb.xlsx", str(tmp_path), "--check", "--verify"])
+    assert exc.value.code == 2

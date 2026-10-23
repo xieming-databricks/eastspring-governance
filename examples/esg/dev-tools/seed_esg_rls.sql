@@ -1,4 +1,4 @@
--- seed_esg_rls.sql — DEV/TEST fixture for view-based RLS (config/esg, target_catalog = hera-dev).
+-- seed_esg_rls.sql — DEV/TEST fixture for examples/esg's view-based RLS (target_catalog = hera-dev).
 --
 -- In PRODUCTION these two tables are CUSTOMER-OWNED (the customer authors + maintains the group
 -- scopes and the attribute->portfolio_code mapping, e.g. from the workbook tabs). The framework

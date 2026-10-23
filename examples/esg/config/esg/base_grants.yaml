@@ -2,7 +2,7 @@ schema_version: '1.0'
 grant_rules:
 - rule_id: GR001
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -20,7 +20,7 @@ grant_rules:
     exp_id: EX002
 - rule_id: GR002
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -30,7 +30,7 @@ grant_rules:
       data_product: portfolio_position
 - rule_id: GR003
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -40,7 +40,7 @@ grant_rules:
       data_product: portfolio_transaction
 - rule_id: GR004
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -50,7 +50,7 @@ grant_rules:
       data_product: investment_research
 - rule_id: GR005
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -60,7 +60,7 @@ grant_rules:
       data_product: mdm_portfolio_structure
 - rule_id: GR006
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:
@@ -70,7 +70,7 @@ grant_rules:
       data_product: mdm_security
 - rule_id: GR007
   groups:
-  - hera-all-admin-admin-unmasked
+  - GSGEIS-hera-all-admin-admin-unmasked
   bundle: ADMIN
   match:
     object_types:

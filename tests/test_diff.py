@@ -1,12 +1,18 @@
-"""Tests for the PySpark DataFrame diff.
+"""Tests for the PySpark DataFrame diff (a local Spark session).
 
-Requires pyspark: skipped where it isn't installed (e.g. local Python 3.14), run on
-any machine/cluster that has it. Execution is also validated against the live workspace.
+Needs the `spark` extra (pyspark 3.5, the customer's runtime), Java 17 and Python 3.12 / 3.13 — as
+in CI. Skipped where pyspark isn't installed, and on Python 3.14+, which PySpark 3.5 doesn't
+support (its pickling fails there with a RecursionError).
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 
+if sys.version_info >= (3, 14):
+    pytest.skip("PySpark 3.5 doesn't support Python 3.14+ — run the Spark tests with Python 3.12 / "
+                "3.13 and the spark extra (as CI does)", allow_module_level=True)
 pytest.importorskip("pyspark")
 
 from eastspring_uc_governance.reconcile import diff  # noqa: E402

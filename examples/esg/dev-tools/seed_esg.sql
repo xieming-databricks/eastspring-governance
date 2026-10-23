@@ -1,13 +1,14 @@
--- seed_esg.sql — dev fixture for the ESG use case (config/esg, target_catalog = hera-dev).
+-- seed_esg.sql — DEV/TEST fixture for examples/esg (target_catalog = hera-dev). Never run it in a
+-- customer environment: there the catalog and base tables already exist.
 --
--- Creates the catalog / schemas / tables that config/esg references (via labels.yaml and the
--- GR001 include), so the reconcile notebook can round-trip end-to-end (plan -> apply -> empty plan).
+-- Creates the catalog, the source + governance schemas and the base tables that
+-- examples/esg/config/esg references (via labels.yaml and the GR001 include), so the example can
+-- round-trip end to end (plan -> apply -> empty plan) in an empty dev workspace. The serving
+-- schemas are NOT created here: `ucgov-provision schemas` does that (see examples/esg/README.md).
 --
--- NOTE ON GROUPS: the ESG account groups config/esg grants reference must exist BEFORE running an
--- `apply`. For dev without Entra, leave each group's external_id null in config/reference/esg.yaml
--- (created as local groups), then:
---     ucgov-provision groups --reference config/reference/esg.yaml --profile <workspace-profile> --apply   (workspace admin)
--- (or the Terraform alternative: cd terraform/account && terraform apply -var env=esg)
+-- NOTE ON GROUPS: the account groups the config grants to must exist BEFORE an `apply`. The
+-- example reference has every external_id null, so they are created as local account groups:
+--     ucgov-provision groups --reference examples/esg/reference/esg.yaml --profile <workspace-profile> --apply   (workspace admin)
 -- (grants to a non-existent principal fail at apply time.)
 --
 -- `hera-dev` contains a hyphen, so it MUST be backtick-quoted everywhere.
