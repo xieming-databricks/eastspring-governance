@@ -20,7 +20,12 @@ from eastspring_uc_governance.reconcile import diff  # noqa: E402
 
 @pytest.fixture(scope="module")
 def spark():
+    import os
     from pyspark.sql import SparkSession
+    # Spark's Python workers must run the same interpreter as the tests (otherwise they start the
+    # `python3` on PATH — e.g. a newer Homebrew Python — and fail to unpickle); CI sets it as well.
+    os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+    os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
     s = (SparkSession.builder.master("local[1]").appName("diff-tests")
          .config("spark.ui.enabled", "false").getOrCreate())
     yield s

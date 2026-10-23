@@ -1,4 +1,4 @@
-"""examples/esg must stay a complete, working deployment: its config is what its workbook generates,
+"""examples/esg (the esg-dev deployment) must stay a complete, working deployment: its config is what its workbook generates,
 it validates cleanly, and everything it refers to is created by the example itself — the dev
 seeds, provisioning (the reference's schemas) or its SQL folder (the mask functions)."""
 from __future__ import annotations
@@ -15,10 +15,10 @@ from eastspring_uc_governance.sql_objects import render_sql_objects
 from eastspring_uc_governance.validation import validate_dir
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "esg"
-WORKBOOK = EXAMPLE / "excels" / "esg" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"
-CONFIG = EXAMPLE / "config" / "esg"
-REFERENCE = EXAMPLE / "reference" / "esg.yaml"
-SQL = EXAMPLE / "sql" / "esg"
+WORKBOOK = EXAMPLE / "excels" / "esg-dev" / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"
+CONFIG = EXAMPLE / "config" / "esg-dev"
+REFERENCE = EXAMPLE / "reference" / "esg-dev.yaml"
+SQL = EXAMPLE / "sql" / "esg-dev"
 SEEDS = [EXAMPLE / "dev-tools" / "seed_esg.sql", EXAMPLE / "dev-tools" / "seed_esg_rls.sql"]
 
 
@@ -46,7 +46,7 @@ def example():
 
 
 def test_example_config_is_what_its_workbook_generates(capsys):
-    """config/esg is exactly what the example workbook generates — a workbook edited (and saved)
+    """config/esg-dev is exactly what the example workbook generates — a workbook edited (and saved)
     without regenerating the config fails here.
 
     Expected: ucgov-generate --verify exits 0 ("is up to date").

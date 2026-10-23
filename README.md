@@ -9,7 +9,7 @@ policies and dynamic (RLS) views — with a reviewable **plan** before every **a
 | Repository | Holds | Built / run by |
 |---|---|---|
 | **this repo** — the engine | the `eastspring_uc_governance` Python package (the wheel), the Databricks notebooks, the job definitions | `azure-pipelines.yml`: test, build + publish the wheel, deploy the notebooks, create / update the jobs |
-| **eastspring-governance-configs** — the deployment content | `excels/<env>/` (the workbook), `config/<env>/` (generated YAML), `reference/<env>.yaml` (the allow-list), `sql/<env>/` (mask UDFs + RLS allow-list MV) | `azure-pipelines-platform.yml` (provisioning) and `azure-pipelines.yml` (reconcile) |
+| **eastspring-governance-configs** — the deployment content | per deployment `<domain>-<env>` (e.g. `esg-dev`): `excels/<deployment>/` (the workbook), `config/<deployment>/` (generated YAML), `reference/<deployment>.yaml` (the allow-list), `sql/<deployment>/` (mask UDFs + RLS allow-list MV) | `azure-pipelines-platform.yml` (provisioning) and `azure-pipelines.yml` (reconcile) |
 
 The wheel contains no environment content: no SQL, no config, no group names. Everything
 Eastspring-specific lives in the configs repo and is passed in by path — never guessed.
@@ -43,7 +43,7 @@ exist first; runs when `reference/` or `sql/` change:
 3. `ucgov-provision schemas` — the governance + serving schemas under `target_catalog`
 4. `ucgov-provision tags` — the reference's `governed_tags` as governed tags (tag policies)
 5. job **`ucgov-apply-functions`** — `CREATE OR REPLACE` the mask UDFs + the
-   `group_portfolio_access` MV from `sql/<env>/`, then checks that every group in the RLS
+   `group_portfolio_access` MV from `sql/<deployment>/`, then checks that every group in the RLS
    allow-list is a reference group
 
 Provisioning is **additive only**: nothing is ever deleted, a governed tag value is never removed.
@@ -79,12 +79,12 @@ if `system.information_schema.abac_policy_definitions` can't be read.
 ## Commands
 
 ```bash
-ucgov-generate excels/esg/<workbook>.xlsx config/esg [--check | --verify]
-ucgov-validate config/esg --reference reference/esg.yaml --sql sql/esg [--verbose] [--skip-warning]
-ucgov-provision groups|schemas|tags --reference reference/esg.yaml [--profile <workspace-profile>] [--apply]
+ucgov-generate excels/esg-dev/<workbook>.xlsx config/esg-dev [--check | --verify]
+ucgov-validate config/esg-dev --reference reference/esg-dev.yaml --sql sql/esg-dev [--verbose] [--skip-warning]
+ucgov-provision groups|schemas|tags --reference reference/esg-dev.yaml [--profile <workspace-profile>] [--apply]
 ```
 
-`--check` validates the workbook without writing; `--verify` fails unless `config/esg` already holds
+`--check` validates the workbook without writing; `--verify` fails unless `config/esg-dev` already holds
 exactly what the workbook generates. `--reference` and `--sql` are required. Validation warnings
 fail by default (`--skip-warning` to allow them). `ucgov-provision` only reads unless `--apply` is given.
 
