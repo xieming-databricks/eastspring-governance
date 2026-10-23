@@ -11,7 +11,7 @@ import json
 import subprocess
 from typing import Any
 
-from .planner import CONFLICT, CREATE, EXISTS, RESOLVE, Action
+from .planner import CONFLICT, CREATE, EXISTS, RESOLVE, UPDATE, Action
 
 
 class CliError(RuntimeError):
@@ -40,6 +40,12 @@ def list_schemas(catalog: str, profile: str | None = None) -> set[str]:
     return {s["full_name"] for s in run(("schemas", "list", catalog), profile) or [] if s.get("full_name")}
 
 
+def list_tag_policies(profile: str | None = None) -> list[dict[str, Any]]:
+    """All governed tags (tag policies) in the account: tag_key / description / values [{name}].
+    Account-wide, but read through the workspace API — a WORKSPACE profile."""
+    return run(("tag-policies", "list-tag-policies"), profile) or []
+
+
 def _resolved_name(resp: Any) -> str | None:
     # resolve-group-proxy is expected to return {"group": {...}} like the account-level resolve; a
     # bare group object is tolerated too (neither shape is confirmed against a live AIM call yet).
@@ -52,13 +58,16 @@ def _resolved_name(resp: Any) -> str | None:
 def execute(actions: list[Action], *, profile: str | None = None,
             dry_run: bool = True) -> list[dict[str, Any]]:
     """Run (or preview) the actions. One result per action, status: EXISTS | PLANNED (dry-run) |
-    SUCCEEDED | FAILED | CONFLICT (never executed; fails the run like FAILED)."""
+    SUCCEEDED | FAILED | CONFLICT (never executed; fails the run like FAILED). A CONFLICT's note
+    is its ``error``; any other note is information (``note``)."""
     results: list[dict[str, Any]] = []
     for a in actions:
         result = {"kind": a.kind, "target": a.target,
                   "command": " ".join(("databricks",) + a.argv) if a.argv else "",
-                  "status": a.status, "error": a.note or None}
-        if a.status in (CREATE, RESOLVE):
+                  "status": a.status,
+                  "error": a.note if a.status == CONFLICT and a.note else None,
+                  "note": a.note if a.status != CONFLICT else ""}
+        if a.status in (CREATE, UPDATE, RESOLVE):
             result["status"] = "PLANNED"
             if not dry_run:
                 try:

@@ -242,8 +242,8 @@ def test_column_mask_policy_carries_definition_and_exempt():
     """A column-mask policy carries its column-tag match and the mask-exempt principals for its
     EXCEPT clause.
 
-    Expected: one policy matching acm_pii_type FULL_NAME, with no table tag match, and
-    except_principals "hera-etl-a,hera-etl-b" (sorted, blank dropped).
+    Expected: one policy matching acm_pii_type FULL_NAME and except_principals
+    "hera-etl-a,hera-etl-b" (sorted, blank dropped).
     """
     docs = {"policies": {"schema_version": "1.0", "column_mask_policies": [
         {"scope": "hera-dev.gold", "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
@@ -252,7 +252,6 @@ def test_column_mask_policy_carries_definition_and_exempt():
     assert len(st.policies) == 1
     p = st.policies[0]
     assert p.column_tag_key == "acm_pii_type" and p.column_tag_value == "FULL_NAME"
-    assert p.table_tag_key is None and p.table_tag_value is None      # no table_matching_tags
     assert p.except_principals == "hera-etl-a,hera-etl-b"             # sorted, blanks dropped
 
 

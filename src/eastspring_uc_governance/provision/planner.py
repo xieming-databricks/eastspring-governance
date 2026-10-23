@@ -1,4 +1,4 @@
-"""Plan group + schema provisioning from the env reference allow-list (pure Python).
+"""Plan group, schema + governed-tag provisioning from the env reference allow-list (pure Python).
 
 Each planner compares what the YAML declares against what exists live and returns one ``Action``
 per declared object:
@@ -9,29 +9,36 @@ per declared object:
     ``external_id: <GUID>`` (AIM):   EXISTS | RESOLVE | CONFLICT
 - ``plan_schemas(reference, live_schemas)`` — config/reference/<env>.yaml
     governance + serving schemas under target_catalog: EXISTS | CREATE
+- ``plan_governed_tags(reference, live_tag_policies)`` — config/reference/<env>.yaml
+    ``governed_tags`` (tag key -> allowed values) as tag policies: EXISTS | CREATE | UPDATE
 
 Additive only: an object that exists live but is no longer declared is never touched (unlike
-``terraform/``, which drops what is removed from the YAML).
+``terraform/``, which drops what is removed from the YAML). For governed tags that also means a
+value is only ever added to a tag's allowed list, never removed, and a tag that accepts any value
+is never narrowed to a list — either could break existing tag assignments and the ABAC policies
+that match on them.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
 EXISTS = "EXISTS"        # already there — nothing to do
-CREATE = "CREATE"        # create it (schema / local group)
+CREATE = "CREATE"        # create it (schema / local group / governed tag)
+UPDATE = "UPDATE"        # governed tag: add the missing allowed values
 RESOLVE = "RESOLVE"      # AIM: resolve the Entra group by external_id (provisions it)
 CONFLICT = "CONFLICT"    # needs a human: not executed, fails the run
 
 
 @dataclass(frozen=True)
 class Action:
-    kind: str                   # "group" | "schema"
-    target: str                 # group name or schema FQN
-    status: str                 # EXISTS | CREATE | RESOLVE | CONFLICT
-    argv: tuple[str, ...] = ()  # databricks CLI arguments (empty unless CREATE / RESOLVE)
+    kind: str                   # "group" | "schema" | "tag"
+    target: str                 # group name, schema FQN or governed tag key
+    status: str                 # EXISTS | CREATE | UPDATE | RESOLVE | CONFLICT
+    argv: tuple[str, ...] = ()  # databricks CLI arguments (empty unless CREATE / UPDATE / RESOLVE)
     external_id: str | None = None
-    note: str = ""
+    note: str = ""              # CONFLICT: why; otherwise extra information for the report
 
 
 # ---- groups (account groups, provisioned per env) ---------------------------
@@ -109,4 +116,74 @@ def plan_schemas(reference: dict[str, Any], live_schemas: set[str], *,
             actions.append(Action("schema", fqn, CREATE,
                                   ("schemas", "create", name, catalog,
                                    "--comment", f"Provisioned from {source}")))
+    return actions
+
+
+# ---- governed tags (tag policies; account-wide, via the workspace API) -----
+
+def desired_governed_tags(reference: dict[str, Any]) -> list[tuple[str, list[str] | None]]:
+    """``[(tag_key, allowed values | None)]`` from the reference's ``governed_tags``, in order.
+    ``None`` (a null list) means any value is allowed — the validator doesn't value-check it
+    either. Values are de-duplicated, keeping their order."""
+    governed = reference.get("governed_tags")
+    if not isinstance(governed, dict):
+        return []
+    out: list[tuple[str, list[str] | None]] = []
+    for key, values in governed.items():
+        if values is None:
+            out.append((str(key), None))
+        else:
+            out.append((str(key), list(dict.fromkeys(str(v) for v in values))))
+    return out
+
+
+def _tag_values(values: list[str]) -> list[dict[str, str]]:
+    return [{"name": v} for v in values]
+
+
+def plan_governed_tags(reference: dict[str, Any], live_tag_policies: list[dict[str, Any]], *,
+                       source: str = "config/reference") -> list[Action]:
+    """One ``Action`` per declared governed tag. ``live_tag_policies`` are the account's tag
+    policies as returned by ``tag-policies list-tag-policies`` (``tag_key`` / ``values: [{name}]``;
+    no ``values`` = the tag accepts any value).
+
+      missing                          -> CREATE  (the reference's values, if it lists any)
+      live list lacks reference values -> UPDATE  (live values + the missing ones, live order kept)
+      otherwise                        -> EXISTS
+    Values that are live but not in the reference are kept and only reported (``note``)."""
+    live = {p["tag_key"]: p for p in live_tag_policies if p.get("tag_key")}
+    actions: list[Action] = []
+    for key, values in desired_governed_tags(reference):
+        policy = live.get(key)
+        if policy is None:
+            body: dict[str, Any] = {"tag_key": key, "description": f"Provisioned from {source}"}
+            if values:
+                body["values"] = _tag_values(values)
+            actions.append(Action("tag", key, CREATE,
+                                  ("tag-policies", "create-tag-policy", "--json", json.dumps(body)),
+                                  note=f"allowed values: {', '.join(values)}" if values
+                                  else "any value allowed"))
+            continue
+        live_values = [v["name"] for v in policy.get("values") or [] if v.get("name")]
+        if not live_values:                                   # accepts any value: never narrowed
+            note = (f"accepts any value in Databricks — not narrowed to the reference's "
+                    f"{len(values)} value(s)" if values else "")
+            actions.append(Action("tag", key, EXISTS, note=note))
+            continue
+        if values is None:
+            actions.append(Action("tag", key, EXISTS,
+                                  note=f"reference allows any value, Databricks only: "
+                                       f"{', '.join(live_values)} — left as is"))
+            continue
+        missing = [v for v in values if v not in live_values]
+        extra = [v for v in live_values if v not in values]
+        notes = ([f"add: {', '.join(missing)}"] if missing else []) + \
+                ([f"in Databricks, not in reference: {', '.join(extra)} — left as is"] if extra else [])
+        if missing:
+            actions.append(Action("tag", key, UPDATE,
+                                  ("tag-policies", "update-tag-policy", key, "values", "--json",
+                                   json.dumps({"values": _tag_values(live_values + missing)})),
+                                  note="; ".join(notes)))
+        else:
+            actions.append(Action("tag", key, EXISTS, note="; ".join(notes)))
     return actions

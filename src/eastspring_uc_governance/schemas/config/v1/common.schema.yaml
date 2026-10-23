@@ -73,14 +73,6 @@ $defs:
         $ref: '#/$defs/NonEmptyString'
       data_product:
         $ref: '#/$defs/NonEmptyString'
-  AssetTagMap:
-    $comment: ABAC policy table-matching predicate (mask scoping by business_function). Value is a free-form non-empty string (approved vocabulary validated at generation time, not by a closed enum here). Referenced only by policies.yaml; policies are detect-only in v1. Grant selection uses LabelMap instead.
-    type: object
-    minProperties: 1
-    additionalProperties: false
-    properties:
-      acm_business_function:
-        $ref: '#/$defs/NonEmptyString'
   ObjectRef:
     $comment: Name shape is validated per declared type via oneOf.
     type: object

@@ -74,7 +74,6 @@ Bundle = "READ" | "WRITE" | "OWNER" | "ADMIN"
 
 FrameworkManagedTagKey = closed enum of MATERIALIZED tag keys (acm_pii_type); every member starts with "acm_"
 LabelMap = {business_function?: NonEmptyString, data_product?: NonEmptyString}[1..*]   # config-only asset labels; values are free strings; NEVER materialized to UC
-AssetTagMap = {acm_business_function: NonEmptyString}     # ABAC policy table-matching only (policies.yaml); free string, not a closed enum
 
 GrantMatch = {
   object_types: UniqueList<ObjectType>[1..*],
@@ -101,8 +100,7 @@ TagAssignment = {
 }
 
 ColumnMaskPolicy = {
-  scope: PolicyScope,
-  table_matching_tags?: AssetTagMap,
+  scope: PolicyScope,                                   # applies to every table in scope (no table narrowing)
   column_matching_tags: {acm_pii_type: NonEmptyString},
   function: FrameworkManagedFunctionName
 }
@@ -135,9 +133,9 @@ TagsYaml = {
   free-form non-empty strings (the approved set is enforced at generation time, not by a
   closed enum). Labels are config-only and are **never written to Unity Catalog**.
   `tags.yaml` holds the column-routing *tags* (`acm_pii_type`) that **are** materialized to
-  UC for ABAC masking. `acm_business_function` survives only as the ABAC policy
-  table-matching key (`AssetTagMap`, a free non-empty string — not a closed enum); policies
-  are detect-only in v1.
+  UC for ABAC masking. A column-mask policy has no table-matching condition (the workbook's
+  Masking Rules `when_key`/`when_value` are not supported — a filled one fails generation): it
+  masks every column tagged `acm_pii_type=<value>` under its scope.
   Row-level security is view-based (dynamic-view `rls_column`), not a materialized tag /
   row-filter policy.
 - For `ObjectRef` and `SecurableRef`, catalogs use `CatalogName`, schemas use `SchemaName`,

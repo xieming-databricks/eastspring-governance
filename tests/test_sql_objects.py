@@ -1,4 +1,7 @@
-"""Tests for rendering the packaged SQL objects (catalog / governance schema are placeholders)."""
+"""Tests for rendering a SQL folder's objects (catalog / governance schema are placeholders).
+
+The SQL is deployment content (the configs repo's sql/<env>/), not package data: these tests render
+the self-contained copy in tests/fixtures/sql/esg."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,11 +9,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from importlib import resources
-
-from eastspring_uc_governance.sql_objects import render_sql_objects, sql_variables, unmasked_groups
+from eastspring_uc_governance.sql_objects import (load_sql_templates, render_sql, render_sql_objects,
+                                                  sql_variables, unknown_allow_list_groups, unmasked_groups)
 
 FIXTURE_REFERENCE = Path(__file__).resolve().parent / "fixtures" / "config" / "reference" / "esg.yaml"
+SQL = Path(__file__).resolve().parent / "fixtures" / "sql" / "esg"
 _REF = {"target_catalog": "testcat", "governance_schemas": ["testcat.gov"]}
 
 
@@ -42,14 +45,14 @@ def test_sql_variables_fail_loudly(ref, msg):
         sql_variables(ref)
 
 
-def test_render_fills_every_placeholder_in_every_packaged_file():
-    """Rendering fills every placeholder in every packaged SQL file and produces one statement per
-    file, in name order.
+def test_render_fills_every_placeholder_in_every_file():
+    """Rendering fills every placeholder in every SQL file of the folder and produces one statement
+    per file, in name order.
 
     Expected: the 4 acm_mask_* UDFs plus group_portfolio_access, sorted, with no acm_is_unmasked; no
     leftover ${ or hera-dev, every object qualified as `testcat`.`gov`., and no trailing semicolon.
     """
-    objects = render_sql_objects(_REF)
+    objects = render_sql_objects(_REF, SQL)
     names = [n for n, _ in objects]
     assert names == sorted(names) and "group_portfolio_access.sql" in names
     assert "acm_is_unmasked.sql" not in names                          # inlined, no shared function
@@ -67,7 +70,7 @@ def test_render_for_the_esg_fixture_reference():
     dev`.`governance`.entitlements.
     """
     ref = yaml.safe_load(FIXTURE_REFERENCE.read_text())
-    sql = dict(render_sql_objects(ref))["group_portfolio_access.sql"]
+    sql = dict(render_sql_objects(ref, SQL))["group_portfolio_access.sql"]
     assert "CREATE OR REPLACE MATERIALIZED VIEW `hera-dev`.`governance`.group_portfolio_access" in sql
     assert "FROM `hera-dev`.`governance`.entitlements" in sql
 
@@ -89,7 +92,7 @@ def test_every_mask_inlines_the_same_generated_condition():
     """
     # "who reads unmasked" comes from the reference; every mask UDF carries the identical condition,
     # so they always agree, and no mask depends on another object existing first.
-    objects = dict(render_sql_objects({**_REF, "groups": _GROUPS}))
+    objects = dict(render_sql_objects({**_REF, "groups": _GROUPS}, SQL))
     masks = {n: sql for n, sql in objects.items() if n.startswith("acm_mask_")}
     assert len(masks) == 4
     cond = sql_variables({**_REF, "groups": _GROUPS})["unmasked_condition"]
@@ -125,7 +128,7 @@ def test_mask_when_clause_is_generated():
     is_account_group_member(hera-all-admin-admin-unmasked) THEN v, and never mentions hera-all-esg-
     read-masked.
     """
-    sql = dict(render_sql_objects({**_REF, "groups": _GROUPS}))["acm_mask_passport.sql"]
+    sql = dict(render_sql_objects({**_REF, "groups": _GROUPS}, SQL))["acm_mask_passport.sql"]
     assert ("RETURN CASE\n"
             "         WHEN is_account_group_member('hera-all-esg-read-unmasked')\n"
             "           OR is_account_group_member('hera-all-admin-admin-unmasked')\n"
@@ -138,7 +141,7 @@ def test_masks_fail_closed_without_unmasked_groups():
 
     Expected: all 4 masks render WHEN FALSE THEN v, so everyone sees masked values.
     """
-    sql = dict(render_sql_objects({**_REF, "groups": [{"name": "only-masked", "external_id": None}]}))
+    sql = dict(render_sql_objects({**_REF, "groups": [{"name": "only-masked", "external_id": None}]}, SQL))
     for name in ("acm_mask_email.sql", "acm_mask_full_name.sql", "acm_mask_identifier.sql", "acm_mask_passport.sql"):
         assert "WHEN FALSE\n         THEN v" in sql[name], name       # nobody unmasked
 
@@ -153,18 +156,18 @@ def test_group_name_quote_is_escaped():
 
 
 def test_multiline_placeholder_never_in_a_comment():
-    """The multi-line ${unmasked_condition} placeholder appears only on code lines in the packaged
-    SQL, never inside a -- comment (where its later lines would escape the comment).
+    """The multi-line ${unmasked_condition} placeholder appears only on code lines in the fixture
+    SQL, never inside a -- comment (where its later lines would escape the comment). The validator
+    checks the same for a deployment's SQL folder (validation.sql_check).
 
-    Expected: no packaged .sql file has that placeholder on a commented line.
+    Expected: no fixture .sql file has that placeholder on a commented line.
     """
     # unmasked_condition spans several lines; substituted inside a `--` comment, its 2nd+ lines would
     # escape the comment and break the SQL. It may only appear on code lines.
-    for f in resources.files("eastspring_uc_governance").joinpath("sql").iterdir():
-        if f.name.endswith(".sql"):
-            for line in f.read_text().splitlines():
-                if "${unmasked_condition}" in line:
-                    assert not line.lstrip().startswith("--") and "--" not in line.split("${unmasked_condition}")[0], (f.name, line)
+    for name, raw in load_sql_templates(SQL):
+        for line in raw.splitlines():
+            if "${unmasked_condition}" in line:
+                assert not line.lstrip().startswith("--") and "--" not in line.split("${unmasked_condition}")[0], (name, line)
 
 
 def test_esg_fixture_reference_unmasked_groups():
@@ -174,3 +177,45 @@ def test_esg_fixture_reference_unmasked_groups():
     """
     ref = yaml.safe_load(FIXTURE_REFERENCE.read_text())
     assert unmasked_groups(ref) == ["hera-all-esg-read-unmasked", "hera-all-admin-admin-unmasked"]
+
+
+# ---- the SQL folder is given, never guessed ------------------------------
+
+@pytest.mark.parametrize("make, msg", [
+    (lambda tmp: "", "path is empty"),
+    (lambda tmp: tmp / "nope", "not found"),
+    (lambda tmp: tmp, "no .sql files"),
+], ids=["empty", "missing", "no_sql_files"])
+def test_sql_folder_must_exist_and_hold_sql(tmp_path, make, msg):
+    """The SQL folder is required: an empty path, a missing folder, or a folder without .sql files
+    is refused (there is no packaged fallback).
+
+    Expected: ValueError naming the problem, from both load_sql_templates and render_sql_objects.
+    """
+    with pytest.raises(ValueError, match=msg):
+        load_sql_templates(make(tmp_path))
+    with pytest.raises(ValueError, match=msg):
+        render_sql_objects(_REF, make(tmp_path))
+
+
+def test_unknown_placeholder_raises():
+    """A typo in a placeholder never reaches spark.sql: rendering raises.
+
+    Expected: KeyError for ${governance_shema}; a trailing ';' is dropped otherwise.
+    """
+    values = sql_variables(_REF)
+    with pytest.raises(KeyError):
+        render_sql("SELECT 1 FROM `${catalog}`.`${governance_shema}`.t", values)
+    assert render_sql("SELECT 1 FROM `${catalog}`.t;\n", values) == "SELECT 1 FROM `testcat`.t"
+
+
+def test_unknown_allow_list_groups_are_the_ones_not_in_the_reference():
+    """RLS allow-list groups that aren't reference groups (e.g. a renamed group's old name) are
+    reported, sorted and de-duplicated; empty values are ignored.
+
+    Expected: ["hera-old", "zz-stale"] for an allow-list of reference + stale names.
+    """
+    ref = {"groups": [{"name": "GSGEIS-a", "external_id": None}, {"name": "GSGEIS-b"}]}
+    found = ["GSGEIS-a", "zz-stale", "hera-old", "zz-stale", "", None, "GSGEIS-b"]
+    assert unknown_allow_list_groups(found, ref) == ["hera-old", "zz-stale"]
+    assert unknown_allow_list_groups(["GSGEIS-a"], ref) == []

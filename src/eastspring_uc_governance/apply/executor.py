@@ -1,9 +1,14 @@
 """Execute the generated DDL against Unity Catalog via Spark (runs in Databricks).
 
-``apply`` takes the planned statements from ``statement.plan_all`` and either previews
-them (dry-run) or runs each via ``spark.sql``, capturing a per-statement result. Execution
-never stops on a failure — one bad statement (e.g. a missing principal) is recorded and the
-rest continue (continue-and-report).
+``apply`` takes planned statements (``statement.plan_phase`` / ``plan_all``) and either previews
+them (dry-run) or runs each via ``spark.sql``, capturing a per-statement result. Within a list,
+execution never stops on a failure — one bad statement (e.g. a missing principal) is recorded and
+the rest continue (continue-and-report).
+
+``apply_phases`` runs whole phases in order (masking -> views -> access -> loosen, see
+``statement.PHASES``) with one exception to continue-and-report: if a statement in a *blocking*
+phase (masking) FAILS, every later statement is SKIPPED — views and grants must never go out
+while a column's mask is missing.
 """
 from __future__ import annotations
 
@@ -14,7 +19,7 @@ from pyspark.sql.types import StructType, StructField, StringType
 
 Row = dict[str, Any]
 
-RESULT_COLS = ["dimension", "change_type", "securable", "principal", "sql", "status", "error"]
+RESULT_COLS = ["phase", "dimension", "change_type", "securable", "principal", "sql", "status", "error"]
 
 
 def _securable(row: Row) -> str:
@@ -45,6 +50,29 @@ def apply(spark: SparkSession, planned: list[tuple[str, Row, str]], *,
                 result["status"] = "FAILED"
                 result["error"] = str(exc)
         results.append(result)
+    return results
+
+
+def apply_phases(spark: SparkSession, phases: list[tuple[str, list[tuple[str, Row, str]]]], *,
+                 dry_run: bool = True, blocking: tuple[str, ...] = ("masking",)) -> list[Row]:
+    """Run (or preview) ``[(phase, planned)]`` in order; each result also carries its ``phase``.
+    If any statement of a ``blocking`` phase FAILED, the statements of every later phase are not
+    run: status SKIPPED, with the reason in ``error``."""
+    results: list[Row] = []
+    blocked_by: str | None = None
+    for phase, planned in phases:
+        if blocked_by:
+            phase_results = apply(spark, planned, dry_run=True)     # builds the rows, runs nothing
+            for r in phase_results:
+                r["status"] = "SKIPPED"
+                r["error"] = f"not run: the {blocked_by} phase had a failure"
+        else:
+            phase_results = apply(spark, planned, dry_run=dry_run)
+            if phase in blocking and any(r["status"] == "FAILED" for r in phase_results):
+                blocked_by = phase
+        for r in phase_results:
+            r["phase"] = phase
+        results.extend(phase_results)
     return results
 
 

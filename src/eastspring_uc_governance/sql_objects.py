@@ -1,8 +1,9 @@
-"""Render the packaged SQL objects (mask UDFs, the group_portfolio_access MV) for one deployment.
+"""Render a deployment's SQL objects (mask UDFs, the group_portfolio_access MV) for one env.
 
-The ``sql/*.sql`` files ship inside the package and contain no deployment specifics: the catalog
-and governance schema are ``${catalog}`` / ``${governance_schema}`` placeholders, filled in from
-the env's ``config/reference/<env>.yaml``:
+The ``*.sql`` templates are NOT in the package: they are deployment content and live with the
+config (e.g. ``sql/esg/`` in the configs repo), passed in as ``sql_dir`` — never guessed. They
+contain no env specifics: the catalog and governance schema are ``${catalog}`` /
+``${governance_schema}`` placeholders, filled in from the env's reference YAML:
 
 - ``catalog``            <- ``target_catalog``
 - ``governance_schema``  <- the one ``governance_schemas`` entry under ``target_catalog``
@@ -15,9 +16,9 @@ so a typo never reaches ``spark.sql``. Pure Python — no Spark, so it is unit-t
 """
 from __future__ import annotations
 
-from importlib import resources
+from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Iterable
 
 
 UNMASKED_SUFFIX = "unmasked"   # groups named *unmasked read raw values (inlined in every acm_mask_*)
@@ -53,14 +54,41 @@ def sql_variables(reference: dict[str, Any]) -> dict[str, str]:
             "unmasked_condition": _unmasked_condition(unmasked_groups(reference))}
 
 
-def render_sql_objects(reference: dict[str, Any]) -> list[tuple[str, str]]:
-    """``[(file_name, sql)]`` for every packaged ``sql/*.sql``, in name order, placeholders filled
-    and any trailing ``;`` removed (``spark.sql`` takes a single statement)."""
+def load_sql_templates(sql_dir: str | Path) -> list[tuple[str, str]]:
+    """``[(file_name, raw_sql)]`` for every ``*.sql`` in ``sql_dir``, in name order. Raises
+    ValueError if the path is empty, not a directory, or holds no ``.sql`` file."""
+    if not str(sql_dir).strip():
+        raise ValueError("SQL folder path is empty")
+    path = Path(sql_dir)
+    if not path.is_dir():
+        raise ValueError(f"SQL folder not found: {path}")
+    files = sorted((f for f in path.iterdir() if f.name.endswith(".sql") and f.is_file()),
+                   key=lambda f: f.name)
+    if not files:
+        raise ValueError(f"no .sql files in {path}")
+    return [(f.name, f.read_text()) for f in files]
+
+
+def render_sql(raw: str, values: dict[str, str]) -> str:
+    """One template -> one statement: placeholders filled (an unknown one raises KeyError, a
+    malformed ``$`` raises ValueError) and any trailing ``;`` removed (``spark.sql`` takes a single
+    statement)."""
+    stmt = raw.strip()
+    stmt = stmt[:-1].strip() if stmt.endswith(";") else stmt
+    return Template(stmt).substitute(values)
+
+
+def render_sql_objects(reference: dict[str, Any], sql_dir: str | Path) -> list[tuple[str, str]]:
+    """``[(file_name, sql)]`` for every ``*.sql`` in ``sql_dir``, in name order, rendered for
+    ``reference``. Raises on a bad folder, a missing value or an unknown placeholder."""
     values = sql_variables(reference)
-    sql_dir = resources.files(__package__).joinpath("sql")
-    rendered: list[tuple[str, str]] = []
-    for f in sorted((f for f in sql_dir.iterdir() if f.name.endswith(".sql")), key=lambda f: f.name):
-        raw = f.read_text().strip()
-        stmt = raw[:-1].strip() if raw.endswith(";") else raw
-        rendered.append((f.name, Template(stmt).substitute(values)))
-    return rendered
+    return [(name, render_sql(raw, values)) for name, raw in load_sql_templates(sql_dir)]
+
+
+def unknown_allow_list_groups(allow_list_groups: Iterable[str], reference: dict[str, Any]) -> list[str]:
+    """Groups in the RLS allow-list (``rls_entitlement_table``'s group column) that are not in the
+    reference's ``groups``, sorted. Such rows grant nothing: ``is_account_group_member`` never
+    matches a name nobody is a member of — typically a renamed group whose entitlement rows still
+    carry the old name, so its members silently see no rows."""
+    known = {g.get("name") if isinstance(g, dict) else g for g in reference.get("groups") or []}
+    return sorted({g for g in allow_list_groups if g and g not in known})

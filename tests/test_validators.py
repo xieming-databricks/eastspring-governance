@@ -18,6 +18,7 @@ from eastspring_uc_governance.validation import check_reference, load_reference,
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 ESG = FIXTURES / "config" / "esg"                          # ESG fixture config
 ESG_REFERENCE = FIXTURES / "config" / "reference" / "esg.yaml"   # ...and its reference allow-list
+ESG_SQL = FIXTURES / "sql" / "esg"                                # ...and its SQL folder
 
 
 def _write_config(tmp: Path, grants: dict, policies: dict, tags: dict, labels: dict) -> Path:
@@ -38,7 +39,11 @@ def _config_with_unknown_group(tmp_path):
     _write_config(cfg, g, p, t, l)
     ref = tmp_path / "reference.yaml"
     ref.write_text(yaml.safe_dump(
-        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}]}, sort_keys=False))
+        {"schema_version": "1.0", "groups": [{"name": "ok-group", "external_id": None}],
+         # target catalog + governance schema: the CLI renders --sql for them (baseline's mask
+         # testcat.governance.acm_mask_full_name is in the fixture SQL folder)
+         "target_catalog": "testcat", "governance_schemas": ["testcat.governance"],
+         "source_schemas": ["testcat.gold"]}, sort_keys=False))
     return cfg, ref
 
 
@@ -480,12 +485,13 @@ def test_cli_verbose_lists_checks(capsys):
     "reference:".
     """
     from eastspring_uc_governance.validation.cli import main
-    rc = main([str(ESG), "--reference", str(ESG_REFERENCE), "--verbose"])
+    rc = main([str(ESG), "--reference", str(ESG_REFERENCE), "--sql", str(ESG_SQL), "--verbose"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "checked" in out
     assert "vs grants.schema.yaml" in out           # per-file schema shown
     assert "reference:" in out                      # reference allow-list check shown
+    assert "[ok] sql: 5 file(s), 4 mask function(s)" in out     # SQL folder check shown
 
 
 def test_cli_requires_reference(capsys):
@@ -495,9 +501,21 @@ def test_cli_requires_reference(capsys):
     """
     from eastspring_uc_governance.validation.cli import main
     with pytest.raises(SystemExit) as exc:
-        main([str(ESG)])
+        main([str(ESG), "--sql", str(ESG_SQL)])
     assert exc.value.code == 2
     assert "--reference" in capsys.readouterr().err
+
+
+def test_cli_requires_sql(capsys):
+    """The validation CLI refuses to run without --sql (the SQL folder is never guessed either).
+
+    Expected: argparse exits with code 2 and the error names --sql.
+    """
+    from eastspring_uc_governance.validation.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main([str(ESG), "--reference", str(ESG_REFERENCE)])
+    assert exc.value.code == 2
+    assert "--sql" in capsys.readouterr().err
 
 
 def test_cli_fails_on_warnings_by_default(tmp_path, capsys):
@@ -507,7 +525,7 @@ def test_cli_fails_on_warnings_by_default(tmp_path, capsys):
     """
     from eastspring_uc_governance.validation.cli import main
     cfg, ref = _config_with_unknown_group(tmp_path)
-    rc = main([str(cfg), "--reference", str(ref)])
+    rc = main([str(cfg), "--reference", str(ref), "--sql", str(ESG_SQL)])
     out = capsys.readouterr().out
     assert rc == 1
     assert "'ghost-group' is not in the reference allow-list" in out
@@ -521,7 +539,7 @@ def test_cli_skip_warning_passes_with_only_warnings(tmp_path, capsys):
     """
     from eastspring_uc_governance.validation.cli import main
     cfg, ref = _config_with_unknown_group(tmp_path)
-    rc = main([str(cfg), "--reference", str(ref), "--skip-warning"])
+    rc = main([str(cfg), "--reference", str(ref), "--sql", str(ESG_SQL), "--skip-warning"])
     out = capsys.readouterr().out
     assert rc == 0
     assert "'ghost-group' is not in the reference allow-list" in out

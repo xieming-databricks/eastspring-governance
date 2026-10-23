@@ -140,20 +140,30 @@ def test_tags_from_asset_classification():
 
 
 def test_column_masks_from_masking_rules():
-    """A Masking Rules row becomes a column-mask policy; the when_key/when_value table condition is
-    dropped.
+    """A Masking Rules row becomes a column-mask policy over its whole attach scope.
 
     Expected: exactly one policy with scope c.gold, column_matching_tags {acm_pii_type: FULL_NAME}
-    and function c.gov.acm_mask_full_name, with no table_matching_tags.
+    and function c.gov.acm_mask_full_name — and nothing else.
     """
-    mr = [{"attach": "c.gold", "when_key": "data_product", "when_value": "x",
-           "match_columns_key": "acm_pii_type", "match_columns_value": "FULL_NAME",
+    mr = [{"attach": "c.gold", "match_columns_key": "acm_pii_type", "match_columns_value": "FULL_NAME",
            "function": "c.gov.acm_mask_full_name"}]
     pols = generate_config(_wb(masking_rules=mr))["policies"]["column_mask_policies"]
     assert pols == [{"scope": "c.gold",
                      "column_matching_tags": {"acm_pii_type": "FULL_NAME"},
                      "function": "c.gov.acm_mask_full_name"}]
-    assert "table_matching_tags" not in pols[0]      # when_key/when_value dropped
+
+
+@pytest.mark.parametrize("col", ["when_key", "when_value"])
+def test_masking_rule_when_columns_are_rejected(col):
+    """A filled when_key / when_value fails generation instead of being silently ignored: table
+    narrowing isn't supported, and a mask that seemed narrowed would really cover the whole scope.
+
+    Expected: GeneratorError naming the row, the column and "not supported".
+    """
+    mr = [{"attach": "c.gold", col: "data_product", "match_columns_key": "acm_pii_type",
+           "match_columns_value": "FULL_NAME", "function": "c.gov.acm_mask_full_name"}]
+    with pytest.raises(GeneratorError, match=rf"Masking Rules row 0: {col} is not supported"):
+        generate_config(_wb(masking_rules=mr))
 
 
 def test_exceptions_carry_exp_id():
@@ -229,9 +239,13 @@ def test_real_v3_workbook_generates_valid_config():
     Expected: valid and compilable; 10 labels, 7 base rules, 5 serving rules all on hera-dev.dm_esg,
     11 views (including dm_something.fact_portfolio_position, with RLS on
     dm_esg.fact_portfolio_position), 7 acm_pii_type column tags, and 4 mask policies using acm_
-    functions with no table_matching_tags.
+    functions.
     """
     wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
+    # the v3 sign-off still has Masking Rules when_key/when_value (no longer supported): drop the two
+    # columns as deleting them in Excel would (the frozen .xlsx itself is left untouched)
+    wb["Masking Rules"] = [{k: v for k, v in r.items() if k not in ("when_key", "when_value")}
+                           for r in wb["Masking Rules"]]
     docs = generate_config(wb)                       # raises if invalid
     assert validate_docs(docs).ok
     assert compile_config(docs).ok
@@ -257,7 +271,18 @@ def test_real_v3_workbook_generates_valid_config():
     masks = docs["policies"]["column_mask_policies"]  # from Masking Rules (4 rows)
     assert len(masks) == 4
     assert all(m["function"].split(".")[-1].startswith("acm_") for m in masks)
-    assert all("table_matching_tags" not in m for m in masks)   # when_key/value dropped
+
+
+def test_v3_workbook_as_signed_off_is_rejected_for_its_when_columns():
+    """The v3 sign-off as-is fills Masking Rules when_key/when_value, which are no longer supported:
+    generation fails and names every such cell, so the business deletes the two columns.
+
+    Expected: GeneratorError with 8 "not supported" lines (4 rows x when_key + when_value).
+    """
+    wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
+    with pytest.raises(GeneratorError) as exc:
+        generate_config(wb)
+    assert str(exc.value).count("is not supported") == 8
 
 
 # ---- referential-integrity failures: each mistake -> its specific message ----

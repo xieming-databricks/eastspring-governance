@@ -53,3 +53,50 @@ def test_dedup_repeated_refs():
     refs = [RefObject("table", "c.s.missing", "a"), RefObject("table", "c.s.missing", "b")]
     warns = preflight.check_existence(refs, set())
     assert len(warns) == 1
+
+
+# ---- RLS allow-list table (rls_entitlement_table) ---------------------------
+
+_RLS = "hera-dev.governance.group_portfolio_access"
+
+
+def test_rls_table_fits():
+    """The allow-list exists with the group column and every rls_column the views use; column
+    names compare case-insensitively.
+
+    Expected: no warnings.
+    """
+    assert preflight.check_rls_table(_RLS, {"AD_GROUP", "portfolio_code"}, group_column="ad_group",
+                                     rls_columns={"portfolio_code"}) == []
+
+
+def test_rls_table_missing_or_unset():
+    """A missing allow-list table, or none in the reference, is reported once — every RLS view
+    would fail on it.
+
+    Expected: one rls_table_missing warning each; the unset case names the rls_column(s).
+    """
+    missing = preflight.check_rls_table(_RLS, None, group_column="ad_group", rls_columns={"portfolio_code"})
+    assert [(w["kind"], w["fqn"]) for w in missing] == [("rls_table_missing", _RLS)]
+    unset = preflight.check_rls_table(None, None, group_column="ad_group", rls_columns={"portfolio_code"})
+    assert unset[0]["kind"] == "rls_table_missing" and "portfolio_code" in unset[0]["reason"]
+
+
+def test_rls_table_missing_columns():
+    """Each column the semi-join needs but the table lacks is its own warning: the group column
+    first, then the rls_columns.
+
+    Expected: rls_column_missing for ad_group and fund_code, in that order.
+    """
+    out = preflight.check_rls_table(_RLS, {"portfolio_code"}, group_column="ad_group",
+                                    rls_columns={"portfolio_code", "fund_code"})
+    assert [(w["kind"], w["fqn"]) for w in out] == [("rls_column_missing", f"{_RLS}.ad_group"),
+                                                    ("rls_column_missing", f"{_RLS}.fund_code")]
+
+
+def test_rls_table_not_needed_without_rls_views():
+    """No view uses an rls_column -> nothing to check, even with no table at all.
+
+    Expected: no warnings.
+    """
+    assert preflight.check_rls_table(None, None, group_column="ad_group", rls_columns=set()) == []

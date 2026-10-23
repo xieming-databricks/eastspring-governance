@@ -1,4 +1,5 @@
-"""Pure DDL generation: reconcile delta row -> a GRANT / REVOKE / ALTER … TAGS statement.
+"""Pure DDL generation: reconcile delta row -> a GRANT / REVOKE / ALTER … TAGS / POLICY statement,
+ordered into apply phases (``PHASES``: masking -> access -> loosen).
 
 No Spark here, so this is fully unit-testable offline. The Spark ``executor`` runs the
 strings this module produces.
@@ -112,9 +113,7 @@ def _create_or_replace_policy(d: dict) -> str:
     exempt = [p for p in (d.get("except_principals") or "").split(",") if p]
     if exempt:
         lines.append("EXCEPT " + ", ".join(_qprincipal(p) for p in exempt))
-    lines.append("FOR TABLES")
-    if d.get("table_tag_key"):
-        lines.append(f"WHEN has_tag_value({_qlit(d['table_tag_key'])}, {_qlit(d['table_tag_value'])})")
+    lines.append("FOR TABLES")                     # every table in scope: no WHEN narrowing
     lines.append(f"MATCH COLUMNS has_tag_value({_qlit(d['column_tag_key'])}, {_qlit(d['column_tag_value'])}) AS c")
     lines.append("ON COLUMN c")
     return "\n".join(lines)
@@ -174,17 +173,45 @@ def statements_for(dimension: str, rows: list[Row], *,
     return [(row, builder(row)) for row in ordered]
 
 
-# Dimensions the apply stage executes, in order (grants/tags first, then column-mask policies).
-APPLIED_DIMENSIONS = ("grants", "tags", "policies")
+# Apply phases — tighten first, loosen last, so data is never readable unmasked mid-apply:
+#   masking : policies ADD/CHANGE (they match nothing until a column is tagged), then tags
+#             ADD/CHANGE (a column is masked the moment it is tagged)
+#   [views] : CREATE OR REPLACE / DROP VIEW (built in the notebook) run here. A new view is
+#             readable at once through the serving schema's schema-level grant, so the masks
+#             underneath must already be in place.
+#   access  : grants ADD, then REMOVE (ADD before REMOVE: no window of lost access)
+#   loosen  : tags REMOVE (UNSET), then policies REMOVE (DROP) — only after access is revoked
+# A failure in the masking phase stops everything after it (see executor.apply_phases).
+PHASES: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "masking": (("policies", ("ADD", "CHANGE")), ("tags", ("ADD", "CHANGE"))),
+    "access": (("grants", ("ADD", "CHANGE", "REMOVE")),),
+    "loosen": (("tags", ("REMOVE",)), ("policies", ("REMOVE",))),
+}
+PHASE_ORDER = ("masking", "access", "loosen")
+
+
+def plan_phase(phase: str, deltas: dict[str, list[Row]], *,
+               policy_defs: dict | None = None) -> list[tuple[str, Row, str]]:
+    """Ordered ``(dimension, row, sql)`` triples for one apply phase (``PHASES``). ``deltas``
+    maps dimension -> delta rows (the notebook's ``delta_counts``). A row whose change_type no
+    phase handles is refused here, so it can't be silently left out."""
+    if phase not in PHASES:
+        raise ApplyError(f"unknown phase {phase!r}")
+    planned: list[tuple[str, Row, str]] = []
+    for dim, change_types in PHASES[phase]:
+        rows = deltas.get(dim) or []
+        bad = sorted({str(r.get("change_type")) for r in rows if r.get("change_type") not in _ORDER})
+        if bad:
+            raise ApplyError(f"unexpected {dim} change_type(s) {bad}")
+        picked = [r for r in rows if r.get("change_type") in change_types]
+        for row, stmt in statements_for(dim, picked, policy_defs=policy_defs):
+            planned.append((dim, row, stmt))
+    return planned
 
 
 def plan_all(deltas: dict[str, list[Row]], *,
              policy_defs: dict | None = None) -> list[tuple[str, Row, str]]:
-    """Flatten a whole delta into ordered ``(dimension, row, sql)`` triples ready for the
-    executor. ``deltas`` maps dimension -> delta rows (the notebook's ``delta_counts``).
+    """The whole delta as ordered ``(dimension, row, sql)`` triples — every phase in
+    ``PHASE_ORDER``, without views (the notebook runs those between masking and access).
     ``policy_defs`` (``{(scope, policy_name): definition}``) is needed to build policy CREATE DDL."""
-    planned: list[tuple[str, Row, str]] = []
-    for dim in APPLIED_DIMENSIONS:
-        for row, stmt in statements_for(dim, deltas.get(dim) or [], policy_defs=policy_defs):
-            planned.append((dim, row, stmt))
-    return planned
+    return [t for phase in PHASE_ORDER for t in plan_phase(phase, deltas, policy_defs=policy_defs)]

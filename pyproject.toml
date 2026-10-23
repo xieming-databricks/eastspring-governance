@@ -36,13 +36,12 @@ ucgov-provision = "eastspring_uc_governance.provision.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Shipped inside the wheel and read at runtime: the YAML contract the validator enforces, and the
-# templated SQL objects (mask UDFs, group_portfolio_access MV) apply_functions renders per env.
+# Shipped inside the wheel and read at runtime: the YAML contract the validator enforces. The SQL
+# templates (mask UDFs, group_portfolio_access MV) are NOT shipped: they are deployment content
+# (the configs repo's sql/<env>/), passed to the renderer as a folder.
 eastspring_uc_governance = [
     "schemas/config/v1/*.schema.yaml",
     "schemas/config/v1/CONTRACT.md",
-    "sql/*.sql",
-    "sql/README.md",
 ]
 
 [tool.pytest.ini_options]

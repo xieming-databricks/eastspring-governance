@@ -9,7 +9,7 @@ so it is unit-testable with plain dicts.
 v3 dynamic-views layout: ``labels.yaml`` from Base Tables (object selection); ``grants.yaml`` from
 Base Grant Rules (base-table grants — e.g. admin/owner) + Rbac Views (end-user grants on the serving
 SCHEMA). ``tags.yaml`` from Asset Classification (column pii tags); ``policies.yaml`` column masks
-from Masking Rules (``when_key``/``when_value`` table-narrowing dropped for now); ``rbac_views.yaml``
+from Masking Rules (a filled ``when_key``/``when_value`` is an error: not supported); ``rbac_views.yaml``
 (expected dynamic views) from Base Tables' ``target_schema`` / ``rls_column``.
 The workbook's ``data_product`` values are free strings in the schema, so their approved set is
 enforced HERE (against the Data Products tab) — that was the deal when we chose open-string
@@ -209,12 +209,19 @@ def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
     ]
 
     # ---- policies.yaml from the Masking Rules tab (column masks) ----------
-    # when_key/when_value (table narrowing) are intentionally ignored for now: the mask is
-    # scoped to `attach` and applies to columns tagged acm_pii_type=<value> under that scope.
+    # A mask is scoped to `attach` and applies to every column tagged acm_pii_type=<value> under
+    # that scope. There is no table narrowing: when_key/when_value are not supported, and a filled
+    # one is an error rather than silently ignored (a narrowing by a config-only label like
+    # data_product could never match in UC, so masks would silently not apply).
     column_mask_policies: list[dict[str, Any]] = []
     for i, r in enumerate(wb.get(T_MASKING_RULES, [])):
         scope = r.get("attach")
         mck, mcv, fn = r.get("match_columns_key"), r.get("match_columns_value"), r.get("function")
+        for col in ("when_key", "when_value"):
+            if r.get(col):
+                problems.append(f"{T_MASKING_RULES} row {i}: {col} is not supported (a mask applies to "
+                                f"every column tagged acm_pii_type={mcv} under {scope}) — delete the "
+                                f"when_key/when_value columns")
         if mck != "acm_pii_type":
             problems.append(f"{T_MASKING_RULES} row {i}: match_columns_key {mck!r} must be 'acm_pii_type'")
         if not scope:

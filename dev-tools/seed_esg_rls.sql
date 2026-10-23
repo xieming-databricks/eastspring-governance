@@ -19,16 +19,16 @@ TBLPROPERTIES (delta.enableRowTracking = true);   -- lets the gpa MV refresh inc
 
 DELETE FROM `hera-dev`.governance.entitlements;
 INSERT INTO `hera-dev`.governance.entitlements VALUES
-  ('hera-all-esg-read-masked',    'portfolio_scope', 'region', '*'),
-  ('hera-all-esg-read-masked',    'portfolio_scope', 'team',   '*'),
-  ('hera-all-esg-read-unmasked',  'portfolio_scope', 'region', '*'),
-  ('hera-all-esg-read-unmasked',  'portfolio_scope', 'team',   '*'),
-  ('hera-sg-eq-read-masked',      'portfolio_scope', 'region', 'EISG'),
-  ('hera-sg-eq-read-masked',      'portfolio_scope', 'team',   'EQ'),
-  ('hera-sg-esg-read-masked',     'portfolio_scope', 'region', 'EISG'),
-  ('hera-sg-esg-read-masked',     'portfolio_scope', 'team',   '*'),
-  ('hera-sg-fi-read-masked',      'portfolio_scope', 'region', 'EISG'),
-  ('hera-sg-fi-read-masked',      'portfolio_scope', 'team',   'FI');
+  ('GSGEIS-hera-all-esg-read-masked',    'portfolio_scope', 'region', '*'),
+  ('GSGEIS-hera-all-esg-read-masked',    'portfolio_scope', 'team',   '*'),
+  ('GSGEIS-hera-all-esg-read-unmasked',  'portfolio_scope', 'region', '*'),
+  ('GSGEIS-hera-all-esg-read-unmasked',  'portfolio_scope', 'team',   '*'),
+  ('GSGEIS-hera-sg-eq-read-masked',      'portfolio_scope', 'region', 'EISG'),
+  ('GSGEIS-hera-sg-eq-read-masked',      'portfolio_scope', 'team',   'EQ'),
+  ('GSGEIS-hera-sg-esg-read-masked',     'portfolio_scope', 'region', 'EISG'),
+  ('GSGEIS-hera-sg-esg-read-masked',     'portfolio_scope', 'team',   '*'),
+  ('GSGEIS-hera-sg-fi-read-masked',      'portfolio_scope', 'region', 'EISG'),
+  ('GSGEIS-hera-sg-fi-read-masked',      'portfolio_scope', 'team',   'FI');
 
 -- ---- source table 2: (axis attribute) -> portfolio_codes that carry it ------------------
 CREATE TABLE IF NOT EXISTS `hera-dev`.governance.entitlement_mapping (

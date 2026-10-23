@@ -143,6 +143,23 @@ def read_existing_objects(spark: SparkSession, catalogs: list[str]) -> set[tuple
     return existing
 
 
+def abac_policies_unavailable(spark: SparkSession) -> str | None:
+    """None if ``abac_policy_definitions`` (Public Preview) can be read, else why not. Without it
+    the live policies are unknown: the diff would plan every target policy as ADD and could never
+    see one to DROP — so the notebook warns in plan mode and refuses to apply."""
+    try:
+        spark.sql(f"SELECT policy_name FROM {_SYS}.abac_policy_definitions LIMIT 1").collect()
+        return None
+    except Exception as exc:
+        first = (str(exc).strip().splitlines() or [""])[0][:200]
+        return f"{_SYS}.abac_policy_definitions is not readable ({type(exc).__name__}: {first})"
+
+
+def empty_policies(spark: SparkSession) -> DataFrame:
+    """An empty live-policies frame (the plan-mode stand-in when the ABAC relation is unavailable)."""
+    return _empty(spark, _POLICY_COLS)
+
+
 def read_live_policies(spark: SparkSession, catalogs: list[str]) -> DataFrame:
     """Live column-mask policies in ``catalogs``, read from the ABAC information relation
     (inventory + EXCEPT list) plus a per-policy ``DESCRIBE POLICY`` for the mask function (the
@@ -150,8 +167,10 @@ def read_live_policies(spark: SparkSession, catalogs: list[str]) -> DataFrame:
     (scope, policy_name, policy_type, function, except_principals) for the diff. Only
     ``acm_policy_*`` COLUMN_MASK policies (the framework-managed set) are read.
 
-    ``abac_policy_definitions`` is Public Preview; if it (or DESCRIBE POLICY) is unavailable the
-    read yields empty and the diff simply proposes ADDs — verify availability during e2e."""
+    ``abac_policy_definitions`` is Public Preview. If it can't be read this RAISES — there is no
+    silent "no live policies" fallback; check ``abac_policies_unavailable`` first and decide (the
+    notebook: warn + ``empty_policies`` in plan, stop in apply). A failing ``DESCRIBE POLICY`` only
+    leaves that policy's function unknown (planned as a CHANGE: an idempotent CREATE OR REPLACE)."""
     cats = _in_list(catalogs)
     if not cats:
         return _empty(spark, _POLICY_COLS)
@@ -159,19 +178,16 @@ def read_live_policies(spark: SparkSession, catalogs: list[str]) -> DataFrame:
                  "WHEN 'CATALOG' THEN catalog_name "
                  "WHEN 'SCHEMA' THEN concat_ws('.', catalog_name, schema_name) "
                  "ELSE concat_ws('.', catalog_name, schema_name, securable_name) END")
-    try:
-        inv = spark.sql(f"""
-            SELECT policy_name,
-                   on_securable_type,
-                   {scope_sql} AS scope,
-                   coalesce(array_join(array_sort(except_principals), ','), '') AS except_principals
-              FROM {_SYS}.abac_policy_definitions
-             WHERE policy_type = 'COLUMN_MASK'
-               AND policy_name LIKE 'acm_policy_%'
-               AND catalog_name IN ({cats})
-        """).collect()
-    except Exception:
-        return _empty(spark, _POLICY_COLS)   # preview relation not enabled -> treat as no live policies
+    inv = spark.sql(f"""
+        SELECT policy_name,
+               on_securable_type,
+               {scope_sql} AS scope,
+               coalesce(array_join(array_sort(except_principals), ','), '') AS except_principals
+          FROM {_SYS}.abac_policy_definitions
+         WHERE policy_type = 'COLUMN_MASK'
+           AND policy_name LIKE 'acm_policy_%'
+           AND catalog_name IN ({cats})
+    """).collect()
 
     rows: list[tuple] = []
     for r in inv:

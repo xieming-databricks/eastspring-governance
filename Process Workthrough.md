@@ -34,7 +34,7 @@
        - The full-sync **protected set**, the **mask-exempt (ETL)** principals, and the **RLS entitlement table**. Terraform, the validator, and the reconcile notebook all read this *same* file.
 2. **Generated config** — `config/esg/*.yaml` (`base_grants`, `labels`, `tags`, `policies`, `rbac_view_grants`, `rbac_views`).        
    - Produced *from the Access-Matrix workbook* by `framework.generate`. This is the **fail-closed** JSON-Schema-validated desired state.
-3. **Git SQL objects** — `sql/*.sql` (one idempotent `CREATE OR REPLACE` per file): the `acm_mask_*` mask UDFs and the `group_portfolio_access` RLS materialized view.
+3. **Git SQL objects** — `sql/<env>/*.sql` in the **configs repo** (deployment content, not part of the wheel; one idempotent `CREATE OR REPLACE` per file): the `acm_mask_*` mask UDFs and the `group_portfolio_access` RLS materialized view. The wheel only renders them (`${catalog}` / `${governance_schema}` / `${unmasked_condition}` from the reference).
 
 
 
@@ -42,7 +42,7 @@
 
 | Notebook | Purpose | Trigger | Compute |
 |---|---|---|---|
-| `notebooks/apply_functions.py` | Applies every `sql/*.sql` (`CREATE OR REPLACE`) — the mask UDFs **and** the `group_portfolio_access` MV. | CI/CD on changes under **`sql/**`** (path-filtered). | **Serverless** required for the MV (Pro/Serverless SQL warehouse, or serverless general compute on DBR 18.1+). |
+| `notebooks/apply_functions.py` | Applies every `*.sql` in its `sql_path` (the configs repo's `sql/<env>/`, `CREATE OR REPLACE`) — the mask UDFs **and** the `group_portfolio_access` MV. | CI/CD on changes under **`sql/**`** (path-filtered). | **Serverless** required for the MV (Pro/Serverless SQL warehouse, or serverless general compute on DBR 18.1+). |
 | `notebooks/reconcile.py` | Compiles `config/esg` → target state, diffs vs. live, and (in `apply`) executes grant/tag/policy deltas + ensures dynamic views. | CI/CD on config changes. | **ABAC-capable compute** required for column-mask policy DDL. |
 
 ---
@@ -108,13 +108,14 @@ Changes to Outputs:
 
 #### 3. (CI/CD) *(onboarding)* Create the RLS group-access table
 
-**What "RLS Group Access Table" means:** the `group_portfolio_access` **materialized view** (`sql/group_portfolio_access.sql`) — the group → `portfolio_code` allow-list the dynamic RLS views semi-join against. It is **derived** from two **customer-owned** source tables, `hera-dev.governance.entitlements` and `hera-dev.governance.entitlement_mapping`.
+**What "RLS Group Access Table" means:** the `group_portfolio_access` **materialized view** (`sql/<env>/group_portfolio_access.sql` in the configs repo) — the group → `portfolio_code` allow-list the dynamic RLS views semi-join against. It is **derived** from two **customer-owned** source tables, `hera-dev.governance.entitlements` and `hera-dev.governance.entitlement_mapping`.
 
 **Order of operations:**
 
 1. **Ensure the source entitlement tables exist and are populated.**
    - customer-owned — the customer authors/maintains the group scopes and the attribute→`portfolio_code` mapping. The framework only reads them.
-2. **Create the MV** by running **`notebooks/apply_functions.py` in `apply` mode**. This applies **all** `sql/*.sql` idempotently — i.e. the `group_portfolio_access` MV **and** the `acm_mask_*` UDFs that step 7's column-mask policies depend on.
+2. **Create the MV** by running **`notebooks/apply_functions.py` in `apply` mode**. This applies **all** `*.sql` in `sql_path` idempotently — i.e. the `group_portfolio_access` MV **and** the `acm_mask_*` UDFs that step 7's column-mask policies depend on.
+   - On **serverless notebook (job) compute**, creating the MV needs the workspace preview *Serverless Generic Compute Materialized View/Streaming Table*. Without it the MV fails with `MV_NOT_ENABLED_ON_SERVERLESS_GENERIC_COMPUTE` (the UDFs still succeed; the run fails). A SQL warehouse can create it without the preview (seen 2026-10-23 on adb-7405618647360901).
 
 ##### RLS Example — how `group_portfolio_access` is derived
 
@@ -199,7 +200,7 @@ Review and commit the diff.
 #### 5. (CI/CD + Local) Validate the generated YAML
 
 ```bash
-ucgov-validate config/esg --reference config/reference/esg.yaml   # add -v to list every check performed
+ucgov-validate config/esg --reference reference/esg.yaml --sql sql/esg   # add -v to list every check performed
 ```
 
 Fail-closed JSON-Schema + semantic validation of `config/esg`, plus the reference allow-list check (groups / schemas / data products / tags). `--reference` is required; a missing or unreadable reference file is an error. Exit `0` when there are no issues, `1` otherwise — warnings fail too, unless `--skip-warning` is given.
@@ -239,5 +240,11 @@ Re-run `notebooks/reconcile.py` with `mode = apply`. This executes:
    - No matter if the view is updated or not, it will be re-created because there is no quick way to detect if the view is changed.
 - **Grants / tags / policies:** the delta as `GRANT` / `REVOKE` / `ALTER … SET/UNSET TAGS` /
   `CREATE OR REPLACE | DROP POLICY`.
+- **Order — tighten first, loosen last**, so data is never readable unmasked while it changes:
+  1. **masking**: policies ADD/CHANGE, then tags ADD/CHANGE
+  2. **views**: the dynamic views above (a new view is readable at once through the serving schema's schema-level grant, so its masks must already be in place)
+  3. **access**: grants ADD, then REMOVE
+  4. **loosen**: UNSET tags, then DROP policies
+   - If a masking statement fails, nothing after it runs (`SKIPPED`). Any `FAILED` / `SKIPPED` statement fails the notebook (and so the job and the pipeline step).
 
 ---

@@ -1,11 +1,13 @@
-"""Provision account groups + env schemas via the databricks CLI (the CLI alternative to terraform/).
+"""Provision account groups, env schemas + governed tags via the databricks CLI (the CLI
+alternative to terraform/).
 
     ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile>            # plan
     ucgov-provision groups  --reference reference/esg.yaml --profile <workspace-profile> --apply    # execute
     ucgov-provision schemas --reference reference/esg.yaml --profile <workspace-profile> [--apply]
+    ucgov-provision tags    --reference reference/esg.yaml --profile <workspace-profile> [--apply]
 
 (`ucgov-provision` is the installed entry point; `python -m eastspring_uc_governance.provision.cli`
-is equivalent.) Both subcommands read the reference YAML given by --reference — required, never
+is equivalent.) Every subcommand reads the reference YAML given by --reference — required, never
 guessed from an env name or directory; a missing or unreadable file is an error — and use a
 WORKSPACE profile: no account-level access is needed.
 
@@ -19,6 +21,13 @@ groups   the reference's `groups` ({name, external_id}). Account groups are reac
          workspace-local groups UC can't grant to. Run it before the env's grants.
 schemas  governance_schemas + serving_schemas under target_catalog (the catalog itself is
          customer-owned and must already exist). Needs CREATE SCHEMA on the catalog.
+tags     the reference's `governed_tags` ({tag key: [allowed values] | null}) as governed tags
+         (tag policies, account-wide), which the ABAC column-mask policies match on:
+           missing                     -> `tag-policies create-tag-policy` (null: any value allowed)
+           exists, lacks listed values -> `tag-policies update-tag-policy <key> values` (adds them)
+         A value is never removed and a tag that accepts any value is never narrowed. Needs
+         permission to manage governed tags. Assigning a governed tag (SET TAGS, by reconcile)
+         needs ASSIGN on it — a separate, one-time grant. Run it before the env's reconcile.
 
 Without --apply it only reads (it never resolves: resolving provisions). It is additive only —
 nothing is ever deleted. --profile defaults to the CLI's own default profile. Exit code 0 on
@@ -56,6 +65,8 @@ def _report(source: str, results: list[dict[str, Any]], apply: bool) -> int:
         print(line)
         if r["error"]:
             print(f"  {'':<10}{'':<34} ! {r['error']}")
+        elif r.get("note"):
+            print(f"  {'':<10}{'':<34}   {r['note']}")
     print(f"{len(results)} item(s): {dict(Counter(r['status'] for r in results))}")
     return 1 if cli_runner.failed(results) else 0
 
@@ -94,6 +105,23 @@ def _schemas(args: argparse.Namespace) -> int:
     return _report(source, results, args.apply)
 
 
+def _tags(args: argparse.Namespace) -> int:
+    reference, source = _reference(args)
+    if reference is None:
+        return 1
+    if not isinstance(reference.get("governed_tags"), dict):
+        print(f"no governed_tags in {source} — nothing to provision")
+        return 0
+    try:
+        live = cli_runner.list_tag_policies(args.profile)
+    except cli_runner.CliError as exc:
+        print(f"could not list governed tags: {exc}")
+        return 1
+    results = cli_runner.execute(planner.plan_governed_tags(reference, live, source=source),
+                                 profile=args.profile, dry_run=not args.apply)
+    return _report(source, results, args.apply)
+
+
 def main(argv: list[str] | None = None) -> int:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--reference", required=True, metavar="PATH",
@@ -110,6 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("schemas", parents=[common],
                    help="governance + serving schemas from the reference"
                    ).set_defaults(func=_schemas)
+    sub.add_parser("tags", parents=[common],
+                   help="governed tags (tag policies) from the reference's `governed_tags`"
+                   ).set_defaults(func=_tags)
 
     args = parser.parse_args(argv)
     return args.func(args)

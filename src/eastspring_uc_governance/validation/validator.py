@@ -489,13 +489,18 @@ def load_reference(ref_path: str | Path) -> tuple[dict[str, Any] | None, str | N
 
 
 def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
-                 reference: dict[str, Any] | str | Path | None = None) -> ValidationResult:
+                 reference: dict[str, Any] | str | Path | None = None,
+                 sql_dir: str | Path | None = None) -> ValidationResult:
     """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas.
 
     ``reference`` is the allow-list: a path to the reference YAML (e.g. ``reference/esg.yaml``) or
     an already-loaded dict, and its warnings are appended. It is never auto-discovered: None, or a
     missing / unreadable file, is an ERROR (otherwise the group / schema / tag checks would be
     silently skipped). Pass ``{}`` to deliberately disable the warning layer (schema-only).
+
+    ``sql_dir`` is the deployment's SQL folder (e.g. ``sql/esg``): checked against the reference and
+    the config (``validation.sql_check``). None skips it, recorded as a skipped check — the CLI
+    makes it required.
     """
     config_dir = Path(config_dir)
     schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
@@ -555,6 +560,14 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
     result.issues.extend(ref_issues)
     result.checks.append(Check("reference", _describe_reference(reference),
                                "warnings" if ref_issues else "ok"))
+
+    if sql_dir is None:
+        result.checks.append(Check("sql", "SQL folder not given — not checked", "skipped"))
+    else:
+        from .sql_check import check_sql_dir           # lazy: sql_check imports Issue/Check from here
+        sql_issues, sql_checks = check_sql_dir(sql_dir, reference, parsed)
+        result.issues.extend(sql_issues)
+        result.checks.extend(sql_checks)
 
     return result
 

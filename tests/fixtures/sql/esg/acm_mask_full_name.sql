@@ -1,3 +1,5 @@
+-- TEST FIXTURE — a self-contained copy for the unit tests. The real templates are deployment
+-- content and live in the configs repo (sql/<env>/); keep this copy in step when the format changes.
 -- Column-mask UDF for acm_pii_type = FULL_NAME.
 -- Referenced by the ABAC policy: COLUMN MASK `${catalog}`.`${governance_schema}`.acm_mask_full_name
 -- Returns the raw value for members of a business "read-unmasked" group; masks everyone else.

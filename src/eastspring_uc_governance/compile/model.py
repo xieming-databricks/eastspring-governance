@@ -37,8 +37,6 @@ class TargetPolicy:
     match_signature: str = field(compare=False)   # human-readable match detail
     column_tag_key: str = field(default="acm_pii_type", compare=False)   # MATCH COLUMNS tag key
     column_tag_value: str = field(default="", compare=False)             # MATCH COLUMNS tag value
-    table_tag_key: str | None = field(default=None, compare=False)       # optional WHEN tag key
-    table_tag_value: str | None = field(default=None, compare=False)     # optional WHEN tag value
     except_principals: str = field(default="", compare=False)            # sorted, comma-joined EXCEPT list
 
 

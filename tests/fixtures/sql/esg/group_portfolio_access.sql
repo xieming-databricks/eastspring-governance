@@ -1,5 +1,8 @@
+-- TEST FIXTURE — a self-contained copy for the unit tests. The real templates are deployment
+-- content and live in the configs repo (sql/<env>/); keep this copy in step when the format changes.
 -- group_portfolio_access (gpa) — the group -> portfolio_code allow-list the dynamic RLS views
--- semi-join against. Framework-owned; DERIVED from the customer-owned entitlements tables.
+-- semi-join against. Eastspring's entitlement model — deployment content (configs repo sql/<env>/),
+-- not part of the wheel; DERIVED from the customer-owned entitlements tables.
 --
 -- A group sees a portfolio_code iff, on EVERY axis (region, team), it is '*' (unrestricted) OR the
 -- code carries the group's value. The cross-axis INNER JOIN is the intersection and fails closed:

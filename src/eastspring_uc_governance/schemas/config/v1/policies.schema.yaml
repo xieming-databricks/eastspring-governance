@@ -23,8 +23,6 @@ $defs:
     properties:
       scope:
         $ref: common.schema.yaml#/$defs/PolicyScope
-      table_matching_tags:
-        $ref: common.schema.yaml#/$defs/AssetTagMap
       column_matching_tags:
         $comment: Exactly the acm_pii_type routing key.
         type: object

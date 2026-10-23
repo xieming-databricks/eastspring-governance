@@ -26,7 +26,12 @@
 # MAGIC
 # MAGIC **`mode`:** `plan` (default) previews the SQL and changes nothing; `apply`
 # MAGIC executes the grant + tag + column-mask policy statements (`CREATE OR REPLACE`/`DROP
-# MAGIC POLICY` — requires **ABAC-capable compute**).
+# MAGIC POLICY` — requires **ABAC-capable compute**) and the dynamic views.
+# MAGIC
+# MAGIC **Apply order — tighten first, loosen last** (`statement.PHASES`), so data is never
+# MAGIC readable unmasked while it changes: **masking** (policies, then tags) -> **views** -> **access**
+# MAGIC (grants, ADD before REMOVE) -> **loosen** (UNSET tags, DROP policies). If a masking statement
+# MAGIC fails, nothing after it runs (SKIPPED). Any FAILED / SKIPPED statement fails the notebook.
 # MAGIC
 # MAGIC **Package:** `eastspring-uc-governance` comes from the **job's environment** (the wheel is a
 # MAGIC dependency there, set by the deploy pipeline), so the notebook installs nothing itself. To run it
@@ -157,10 +162,22 @@ for dim, df in target.items():
 # DBTITLE 1,Read live state from information_schema (grants/tags/policies) — as DataFrames
 from eastspring_uc_governance.reconcile import live
 
+# Live column-mask policies come from abac_policy_definitions (Public Preview). Without it they are
+# unknown: plan warns (every policy shows as ADD, none as DROP); apply stops here, before any change.
+mode = dbutils.widgets.get("mode").strip()                                   # noqa: F821
+policies_unavailable = live.abac_policies_unavailable(spark)                 # noqa: F821
+if policies_unavailable:
+    if mode == "apply":
+        raise ValueError(f"[policies] {policies_unavailable} — refusing to apply: the live column-mask "
+                         f"policies are unknown, so one removed from the config could never be dropped")
+    print(f"[policies] WARNING {policies_unavailable} — this plan shows every policy as ADD and cannot "
+          f"show a DROP; an apply would stop here")
+
 live_frames = {
     "grants": live.read_live_grants(spark, catalogs),
     "tags": live.read_live_tags(spark, catalogs),
-    "policies": live.read_live_policies(spark, catalogs),
+    "policies": (live.empty_policies(spark) if policies_unavailable
+                 else live.read_live_policies(spark, catalogs)),
 }
 existing = live.read_existing_objects(spark, catalogs)                       # noqa: F821
 print(f"[reconcile] live objects for preflight: {len(existing)}")
@@ -218,14 +235,17 @@ show(warn_df)
 
 # DBTITLE 1,Dynamic views — serving schema + CREATE OR REPLACE (RLS semi-join / pass-through)
 # rbac_views.yaml lists the dynamic views the matrix expects (base table -> serving schema). We
-# DETECT missing serving schemas + views to create/drop, PREVIEW the DDL, and — in mode=apply —
-# CREATE OR REPLACE every expected view (RLS semi-join when rls_column is set, else pass-through)
-# and DROP live views in the serving schemas that are not in the matrix. Idempotent (ensure-all).
+# DETECT missing serving schemas + views to create/drop and PREVIEW the DDL. Nothing runs here:
+# the apply cell runs these statements AFTER the masking phase — a new view is readable at once
+# through the serving schema's schema-level grant, so its columns' masks must already exist. In
+# mode=apply that ensures the serving schemas, CREATE OR REPLACEs every expected view (RLS
+# semi-join when rls_column is set, else pass-through) and DROPs live views in the serving
+# schemas that are not in the matrix. Idempotent (ensure-all).
 #
-# FUTURE WORK: this orchestration (live-view read + ensure/drop loop) lives in the notebook, unlike
-# grants/tags/policies which go through statement.plan_all + executor.apply. Move it into
-# the eastspring_uc_governance package (live.read_live_views + a plan_views planner run via executor) for consistency and
-# unit-testability. Deferred by decision — ensure-all keeps it correct; this is a tidiness refactor.
+# FUTURE WORK: the live-view read + ensure/drop list is built here in the notebook, unlike
+# grants/tags/policies which come from statement.plan_phase. Move it into the
+# eastspring_uc_governance package (live.read_live_views + a plan_views planner) for consistency
+# and unit-testability. Deferred by decision — ensure-all keeps it correct; this is a tidiness refactor.
 # Per-view drift *detection* (a stored (source, rls_column) contract / applied-state ledger) is also
 # deferred: ensure-all re-asserts every view each apply, so live always converges to desired.
 from eastspring_uc_governance.apply import statement as _stmt
@@ -238,6 +258,28 @@ mode = dbutils.widgets.get("mode").strip()  # noqa: F821  (also read in the appl
 # RLS allow-list (group -> rls_column) the semi-join filters on; from the reference (reference_path).
 rls_entitlement_table = reference.get("rls_entitlement_table")
 rls_group_column = reference.get("rls_group_column", "ad_group")
+
+# Preflight: the allow-list must exist with the group column + every rls_column the views use —
+# otherwise every RLS view fails. Plan: warning; apply: stop here, before anything is applied.
+rls_columns = {spec["rls_column"] for spec in view_specs.values() if spec.get("rls_column")}
+rls_live_columns = None
+if rls_entitlement_table and rls_columns:
+    _parts = [p.strip("`").replace("'", "''") for p in str(rls_entitlement_table).split(".")]
+    if len(_parts) == 3:
+        rls_live_columns = {r["column_name"] for r in spark.sql(           # noqa: F821
+            "SELECT column_name FROM system.information_schema.columns "
+            f"WHERE table_catalog = '{_parts[0]}' AND table_schema = '{_parts[1]}' "
+            f"AND table_name = '{_parts[2]}'").collect()} or None
+rls_problems = preflight.check_rls_table(rls_entitlement_table, rls_live_columns,
+                                         group_column=rls_group_column, rls_columns=rls_columns)
+print(f"[views] RLS allow-list {rls_entitlement_table or '-'} for rls_column(s) {sorted(rls_columns)}: "
+      f"{'OK' if not rls_problems else f'{len(rls_problems)} problem(s)'}")
+for _w in rls_problems:
+    print(f"[views] WARNING {_w['kind']}: {_w['fqn'] or '-'} — {_w['reason']}")
+warnings.extend(rls_problems)
+if rls_problems and mode == "apply":
+    raise ValueError(f"[views] RLS allow-list not usable ({len(rls_problems)} problem(s) above) — "
+                     f"nothing applied")
 
 existing_schemas, live_views = set(), set()
 for _cat in sorted({s.split(".")[0] for s in serving_schemas}):
@@ -267,27 +309,25 @@ for v in expected_views:
     view_ddl.append((v, _stmt.view_statement(spec, entitlement_table=rls_entitlement_table,
                                              group_col=rls_group_column)))
 
-print(f"\n[views] {len(view_ddl)} view DDL ({'EXECUTE' if mode == 'apply' else 'PREVIEW — plan mode'}):")
+print(f"\n[views] {len(view_ddl)} view DDL ({'run by the apply cell' if mode == 'apply' else 'PREVIEW — plan mode'}):")
 for v, sql in view_ddl:
     print(f"\n-- {v}\n{sql}")
 
-if mode == "apply":
-    for s in serving_schemas:                                    # ensure serving schema exists
-        _c, _s = s.split(".", 1)
-        spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{_c}`.`{_s}`")   # noqa: F821
-    for _v, sql in view_ddl:
-        spark.sql(sql)                                           # noqa: F821  (CREATE OR REPLACE VIEW)
-    for _v in views_to_drop:
-        spark.sql(_stmt.drop_view_statement(_v))                 # noqa: F821
-    print(f"\n[views] APPLIED — {len(view_ddl)} view(s) ensured, {len(views_to_drop)} dropped")
-else:
-    print("\n[views] plan mode — nothing created/dropped")
+# (dimension, row, sql) triples for the apply cell's "views" phase (between masking and access)
+view_planned = (
+    [("views", {"change_type": "ENSURE", "securable_fqn": s},
+      "CREATE SCHEMA IF NOT EXISTS `{}`.`{}`".format(*s.split(".", 1))) for s in serving_schemas]
+    + [("views", {"change_type": "ENSURE", "securable_fqn": v}, sql) for v, sql in view_ddl]
+    + [("views", {"change_type": "REMOVE", "securable_fqn": v}, _stmt.drop_view_statement(v))
+       for v in views_to_drop])
+print(f"\n[views] {len(view_planned)} statement(s) — run by the apply cell, after the masking phase")
 
 # COMMAND ----------
 
-# DBTITLE 1,Apply -> execute the grant + tag + policy delta (GRANT/REVOKE / SET TAGS / CREATE OR REPLACE|DROP POLICY)
-# mode=plan (default) previews the SQL and runs nothing; mode=apply executes via spark.sql.
-# Column-mask policies are applied as ABAC DDL -> requires ABAC-capable compute.
+# DBTITLE 1,Apply -> masking (policies, tags) -> views -> access (grants) -> loosen (UNSET tags, DROP policies)
+# mode=plan (default) previews the SQL in run order and runs nothing; mode=apply executes via
+# spark.sql. Column-mask policies are applied as ABAC DDL -> requires ABAC-capable compute.
+# Tighten first, loosen last (statement.PHASES); a failure in masking SKIPs everything after it.
 from eastspring_uc_governance.apply import statement, executor
 from dataclasses import asdict
 
@@ -298,12 +338,21 @@ dry_run = mode != "apply"
 # which the delta row alone doesn't carry — look it up by (scope, policy_name).
 policy_defs = {(p.scope, p.policy_name): asdict(p) for p in state.policies}
 
-planned = statement.plan_all(delta_counts, policy_defs=policy_defs)  # [(dimension, row, sql)]
-apply_results = executor.apply(spark, planned, dry_run=dry_run)  # noqa: F821
-apply_res_df = executor.results_frame(spark, apply_results)      # noqa: F821
+phases = [                                                       # [(phase, [(dimension, row, sql)])]
+    ("masking", statement.plan_phase("masking", delta_counts, policy_defs=policy_defs)),
+    ("views", view_planned),
+    ("access", statement.plan_phase("access", delta_counts, policy_defs=policy_defs)),
+    ("loosen", statement.plan_phase("loosen", delta_counts, policy_defs=policy_defs)),
+]
+planned = [t for _phase, stmts in phases for t in stmts]
+apply_results = executor.apply_phases(spark, phases, dry_run=dry_run)  # noqa: F821
+apply_res_df = executor.results_frame(spark, apply_results)            # noqa: F821
 
 from collections import Counter as _Counter
 status_counts = dict(_Counter(r["status"] for r in apply_results))
+for _phase, _stmts in phases:
+    _c = dict(_Counter(r["status"] for r in apply_results if r["phase"] == _phase))
+    print(f"[apply] {_phase:<8} {len(_stmts):>4} statement(s) {_c or ''}")
 print(f"[apply] mode={mode} ({'DRY-RUN — nothing executed' if dry_run else 'EXECUTED'}) | "
       f"{len(planned)} statement(s) | {status_counts}")
 print("[apply] note: column-mask policy DDL requires ABAC-capable compute")
@@ -321,3 +370,9 @@ for dim, rows in delta_counts.items():
 print(f"RECONCILE OK | catalog={target_catalog} | " + " | ".join(parts)
       + f" | warnings={len(warnings)} | ignored_outside_catalog={len(outside)}")
 print(f"APPLY {mode.upper()} | {len(planned)} statement(s) | {status_counts}")
+
+# a FAILED (or SKIPPED, after a masking failure) statement fails the run — so the job, and the
+# pipeline step waiting on it, report it instead of finishing green
+if status_counts.get("FAILED") or status_counts.get("SKIPPED"):
+    raise ValueError(f"apply: {status_counts.get('FAILED', 0)} FAILED, "
+                     f"{status_counts.get('SKIPPED', 0)} SKIPPED — see the apply results above")

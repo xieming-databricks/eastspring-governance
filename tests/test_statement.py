@@ -152,11 +152,10 @@ def test_principal_quoting_group_and_email():
 # ---- ABAC column-mask policies ------------------------------------------
 
 def _pdef(scope="hera-dev.gold", name="acm_policy_mask_full_name__habc",
-          fn="hera-dev.governance.acm_mask_full_name", col_val="FULL_NAME",
-          tkey=None, tval=None, exempt=""):
+          fn="hera-dev.governance.acm_mask_full_name", col_val="FULL_NAME", exempt=""):
     return {"scope": scope, "policy_name": name, "function": fn,
             "column_tag_key": "acm_pii_type", "column_tag_value": col_val,
-            "table_tag_key": tkey, "table_tag_value": tval, "except_principals": exempt}
+            "except_principals": exempt}
 
 
 def _prow(change_type, scope="hera-dev.gold", name="acm_policy_mask_full_name__habc"):
@@ -179,20 +178,18 @@ def test_policy_create_or_replace_basic():
     assert "MATCH COLUMNS has_tag_value('acm_pii_type', 'FULL_NAME') AS c" in sql
     assert sql.rstrip().endswith("ON COLUMN c")
     assert "EXCEPT" not in sql            # no exempt principals -> no EXCEPT
-    assert "WHEN" not in sql              # no table_matching_tags -> no WHEN
+    assert "WHEN" not in sql              # no table narrowing: every table in scope
 
 
-def test_policy_create_with_except_and_when():
-    """A policy with exempt principals and a table-tag condition includes EXCEPT and WHEN clauses.
+def test_policy_create_with_except():
+    """A policy with exempt principals includes the EXCEPT clause, and never a WHEN (there is no
+    table narrowing).
 
-    Expected: EXCEPT `hera-etl-ingest`, `sp-pipelines` and WHEN
-    has_tag_value('acm_business_function', 'investments').
+    Expected: EXCEPT `hera-etl-ingest`, `sp-pipelines`; no WHEN.
     """
-    sql = statement.policy_statement(
-        _prow("CHANGE"),
-        _pdef(exempt="hera-etl-ingest,sp-pipelines", tkey="acm_business_function", tval="investments"))
+    sql = statement.policy_statement(_prow("CHANGE"), _pdef(exempt="hera-etl-ingest,sp-pipelines"))
     assert "EXCEPT `hera-etl-ingest`, `sp-pipelines`" in sql
-    assert "WHEN has_tag_value('acm_business_function', 'investments')" in sql
+    assert "WHEN" not in sql
 
 
 def test_policy_change_uses_create_or_replace():
@@ -313,21 +310,60 @@ def test_statements_for_orders_add_before_remove():
     assert cts == ["ADD", "REMOVE"]
 
 
-def test_plan_all_includes_policies():
-    """plan_all covers all three dimensions in a fixed order and produces SQL for each.
-
-    Expected: dimension order [grants, tags, policies], each with a SQL string.
-    """
-    deltas = {
-        "grants": [_g("ADD", "g", "SELECT", "table", "c.s.t")],
-        "tags": [_t("ADD", "table", "c.s.t", "acm_x", "v")],
-        "policies": [_prow("ADD")],
+def _all_deltas():
+    """One ADD and one REMOVE in every dimension (tags: a CHANGE too)."""
+    return {
+        "grants": [_g("REMOVE", "g", "SELECT", "table", "c.s.old"),
+                   _g("ADD", "g", "SELECT", "table", "c.s.t")],
+        "tags": [_t("REMOVE", "table", "c.s.old", "acm_x"), _t("CHANGE", "table", "c.s.u", "acm_x", "w"),
+                 _t("ADD", "table", "c.s.t", "acm_x", "v")],
+        "policies": [_prow("REMOVE", name="acm_policy_gone"), _prow("ADD")],
     }
-    defs = {("hera-dev.gold", "acm_policy_mask_full_name__habc"): _pdef()}
-    planned = statement.plan_all(deltas, policy_defs=defs)
-    dims = [dim for dim, _row, _stmt in planned]
-    assert dims == ["grants", "tags", "policies"]     # grants, then tags, then policies
+
+
+_DEFS = {("hera-dev.gold", "acm_policy_mask_full_name__habc"): _pdef()}
+
+
+def test_plan_all_tightens_first_and_loosens_last():
+    """plan_all puts masking first (policies, then tags), then access (grants ADD before REMOVE),
+    then loosening (UNSET tags, DROP policies), so nothing is readable unmasked mid-apply.
+
+    Expected: (dimension, change_type) order policies ADD, tags CHANGE/ADD, grants ADD, grants
+    REMOVE, tags REMOVE, policies REMOVE; every statement is a SQL string.
+    """
+    planned = statement.plan_all(_all_deltas(), policy_defs=_DEFS)
+    assert [(d, r["change_type"]) for d, r, _ in planned] == [
+        ("policies", "ADD"), ("tags", "ADD"), ("tags", "CHANGE"),
+        ("grants", "ADD"), ("grants", "REMOVE"),
+        ("tags", "REMOVE"), ("policies", "REMOVE")]
     assert all(isinstance(stmt, str) for _d, _r, stmt in planned)
+
+
+def test_plan_phase_splits_the_delta_without_losing_rows():
+    """Each phase takes only its own rows, and together the phases cover the whole delta once.
+
+    Expected: masking has no REMOVE, access only grants, loosen only REMOVEs; 7 rows in total.
+    """
+    deltas = _all_deltas()
+    by_phase = {ph: statement.plan_phase(ph, deltas, policy_defs=_DEFS) for ph in statement.PHASE_ORDER}
+    assert all(r["change_type"] != "REMOVE" for _d, r, _ in by_phase["masking"])
+    assert {d for d, _r, _ in by_phase["access"]} == {"grants"}
+    assert all(r["change_type"] == "REMOVE" for _d, r, _ in by_phase["loosen"])
+    assert sum(len(v) for v in by_phase.values()) == sum(len(v) for v in deltas.values())
+
+
+def test_plan_phase_refuses_unknown_change_type_and_phase():
+    """A row whose change_type no phase handles is refused, not silently dropped; so is an
+    unknown phase name.
+
+    Expected: ApplyError for a BOGUS tag row (in any phase) and for phase "widgets".
+    """
+    deltas = {"tags": [_t("BOGUS", "table", "c.s.t", "acm_x", "v")]}
+    for phase in ("masking", "loosen"):
+        with pytest.raises(statement.ApplyError, match="unexpected tags change_type"):
+            statement.plan_phase(phase, deltas)
+    with pytest.raises(statement.ApplyError, match="unknown phase"):
+        statement.plan_phase("widgets", {})
 
 
 def test_unknown_dimension_raises():
