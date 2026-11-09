@@ -218,12 +218,13 @@ def test_labels_required(tmp_path):
     Expected: result.ok is False with a "file not found" issue for labels.yaml.
     """
     g, p, t, _l = _baseline()
-    (tmp_path / "grants.yaml").write_text(yaml.safe_dump(g, sort_keys=False))
+    (tmp_path / "base_grants.yaml").write_text(yaml.safe_dump(g, sort_keys=False))
     (tmp_path / "policies.yaml").write_text(yaml.safe_dump(p, sort_keys=False))
     (tmp_path / "tags.yaml").write_text(yaml.safe_dump(t, sort_keys=False))
     # labels.yaml deliberately omitted
-    result = validate_dir(tmp_path)
+    result = validate_dir(tmp_path, reference={})     # schema-only: the reference isn't under test
     assert not result.ok
+    assert {i.file for i in result.errors} == {"labels.yaml"}   # only the missing file
     assert any(i.file == "labels.yaml" and "file not found" in i.message
                for i in result.issues)
 
@@ -711,3 +712,41 @@ def test_non_mapping_documents_do_not_crash():
                  "rbac_views": {"views": ["x"]}}
     assert check_reference(shapeless, {"groups": []}) == []
     assert check_reference(_docs(), "not-a-reference") == []
+
+
+# ---- semantic issues name the file they are in --------------------------
+
+@pytest.mark.parametrize("filename", ["base_grants.yaml", "rbac_view_grants.yaml"])
+def test_include_exclude_overlap_is_reported_in_its_own_file(filename):
+    """An object in both include and exclude of a rule is reported against the grants file it is in
+    — base_grants.yaml or rbac_view_grants.yaml — never a generic or non-existent file name.
+
+    Expected: exactly one semantic error, file == the file with the overlap, path grant_rules/0.
+    """
+    g, p, t, l = _baseline()
+    bad = copy.deepcopy(g)
+    obj = {"type": "table", "name": "testcat.gold.orders"}
+    bad["grant_rules"][0] = {"groups": ["grp-read"], "bundle": "READ", "include": [obj], "exclude": [obj]}
+    docs = {"base_grants.yaml": g, "policies.yaml": p, "tags.yaml": t, "labels.yaml": l}
+    docs[filename] = bad
+    issues = [i for i in validate_docs(docs).issues if i.layer == "semantic"]
+    assert [(i.file, i.path) for i in issues] == [(filename, "grant_rules/0")]
+    assert "appears in both include and exclude" in issues[0].message
+
+
+def test_every_semantic_issue_names_a_config_file():
+    """Each semantic checker reports against the file it checked, for every config file.
+
+    Expected: for a duplicate in tags.yaml, labels.yaml and rbac_views.yaml, each issue's file is
+    exactly that file.
+    """
+    g, p, t, l = _baseline()
+    t2, l2 = copy.deepcopy(t), copy.deepcopy(l)
+    t2["tags"].append(copy.deepcopy(t2["tags"][0]))
+    l2["labels"].append(copy.deepcopy(l2["labels"][0]))
+    view = {"view": "testcat.dm.v", "source": "testcat.gold.orders"}
+    views = {"schema_version": "1.0", "views": [view, dict(view)]}
+    result = validate_docs({"base_grants.yaml": g, "policies.yaml": p, "tags.yaml": t2,
+                            "labels.yaml": l2, "rbac_views.yaml": views})
+    assert sorted(i.file for i in result.issues if i.layer == "semantic") == \
+        ["labels.yaml", "rbac_views.yaml", "tags.yaml"]

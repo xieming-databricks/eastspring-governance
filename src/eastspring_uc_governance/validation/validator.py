@@ -32,7 +32,7 @@ class Issue:
     ``severity`` is "error" (fails the run: schema / semantic violations, and anything outside the
     reference allow-list) or "warning" (advisory only, never fails: e.g. an RLS table the SQL folder
     doesn't create, which may be customer-maintained). Only errors flip ``ok``."""
-    file: str          # config file the issue is in, e.g. "grants.yaml"
+    file: str          # config file the issue is in, e.g. "base_grants.yaml"
     path: str          # location within the file, JSON-pointer style, e.g. "grant_rules/0/bundle"
     message: str = field(compare=False)
     layer: str = field(default="schema", compare=False)   # "schema" | "semantic" | "reference"
@@ -112,9 +112,12 @@ _ALL_FILE_SCHEMA = {**_FILE_SCHEMA, **_OPTIONAL_FILE_SCHEMA}
 
 
 # ---- Structural semantic layer (rules JSON Schema cannot express) --------
+# Each checker gets the name of the file it checks and reports against it — never a hard-coded name
+# (one checker can serve several files, e.g. _check_grants for base_grants + rbac_view_grants).
 
-def _check_grants(doc: Any) -> list[Issue]:
-    """grants.yaml: no object may appear in both include and exclude of a rule."""
+def _check_grants(doc: Any, filename: str) -> list[Issue]:
+    """A grants file (base_grants.yaml / rbac_view_grants.yaml): no object may appear in both include
+    and exclude of a rule."""
     issues: list[Issue] = []
     if not isinstance(doc, dict):
         return issues
@@ -124,12 +127,12 @@ def _check_grants(doc: Any) -> list[Issue]:
         inc = {_ref_key(o) for o in _as_list(rule.get("include"))}
         exc = {_ref_key(o) for o in _as_list(rule.get("exclude"))}
         for key in sorted(k for k in inc & exc if k is not None):
-            issues.append(Issue("grants.yaml", f"grant_rules/{i}",
+            issues.append(Issue(filename, f"grant_rules/{i}",
                                 f"object {key} appears in both include and exclude", "semantic"))
     return issues
 
 
-def _check_tags(doc: Any) -> list[Issue]:
+def _check_tags(doc: Any, filename: str) -> list[Issue]:
     """tags.yaml: a securable may appear only once (all its tags in one entry)."""
     issues: list[Issue] = []
     if not isinstance(doc, dict):
@@ -142,7 +145,7 @@ def _check_tags(doc: Any) -> list[Issue]:
         if key is None:
             continue
         if key in seen:
-            issues.append(Issue("tags.yaml", f"tags/{i}/securable",
+            issues.append(Issue(filename, f"tags/{i}/securable",
                                 f"securable {key} is repeated (first at tags/{seen[key]}); "
                                 f"put all of its tags in one entry", "semantic"))
         else:
@@ -150,7 +153,7 @@ def _check_tags(doc: Any) -> list[Issue]:
     return issues
 
 
-def _check_labels(doc: Any) -> list[Issue]:
+def _check_labels(doc: Any, filename: str) -> list[Issue]:
     """labels.yaml: a securable may appear only once (all its labels in one entry)."""
     issues: list[Issue] = []
     if not isinstance(doc, dict):
@@ -163,7 +166,7 @@ def _check_labels(doc: Any) -> list[Issue]:
         if key is None:
             continue
         if key in seen:
-            issues.append(Issue("labels.yaml", f"labels/{i}/securable",
+            issues.append(Issue(filename, f"labels/{i}/securable",
                                 f"securable {key} is repeated (first at labels/{seen[key]}); "
                                 f"put all of its labels in one entry", "semantic"))
         else:
@@ -171,8 +174,8 @@ def _check_labels(doc: Any) -> list[Issue]:
     return issues
 
 
-def _check_views(doc: Any) -> list[Issue]:
-    """views.yaml: a view fqn may be produced only once."""
+def _check_views(doc: Any, filename: str) -> list[Issue]:
+    """rbac_views.yaml: a view fqn may be produced only once."""
     issues: list[Issue] = []
     if not isinstance(doc, dict):
         return issues
@@ -184,7 +187,7 @@ def _check_views(doc: Any) -> list[Issue]:
         if not isinstance(key, str):
             continue
         if key in seen:
-            issues.append(Issue("rbac_views.yaml", f"views/{i}/view",
+            issues.append(Issue(filename, f"views/{i}/view",
                                 f"view {key} defined more than once (first at views/{seen[key]})", "semantic"))
         else:
             seen[key] = i
@@ -225,7 +228,7 @@ def _validate_one(filename: str, doc: Any, schema_dir: Path, registry: Registry)
         Issue(filename, _path_str(err), err.message, "schema")
         for err in validator.iter_errors(doc)
     )
-    issues.extend(_FILE_SEMANTIC.get(filename, lambda _doc: [])(doc))
+    issues.extend(_FILE_SEMANTIC.get(filename, lambda _doc, _fn: [])(doc, filename))
     return issues
 
 
@@ -585,7 +588,7 @@ def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None,
                   reference: Any = None) -> ValidationResult:
     """Validate already-parsed config dicts against the YAML schemas.
 
-    ``docs`` may be keyed by short name (``"grants"``) or filename (``"grants.yaml"``).
+    ``docs`` may be keyed by short name (``"base_grants"``) or filename (``"base_grants.yaml"``).
     Use this when config arrives as in-memory dicts (e.g. JSON job params) rather than
     files on disk. A missing dimension is reported as an issue, mirroring ``validate_dir``.
     Pass ``reference`` (the allow-list dict) to also append the reference findings (errors); when
