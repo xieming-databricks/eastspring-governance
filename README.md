@@ -79,14 +79,18 @@ if `system.information_schema.abac_policy_definitions` can't be read.
 ## Commands
 
 ```bash
-ucgov-generate excels/esg-dev/<workbook>.xlsx config/esg-dev [--check | --verify]
+ucgov-generate excels/esg-dev/<workbook>.xlsx config/esg-dev --reference reference/esg-dev.yaml [--check | --verify] [--verbose] [--skip-warning]
 ucgov-validate config/esg-dev --reference reference/esg-dev.yaml --sql sql/esg-dev [--verbose] [--skip-warning]
 ucgov-provision groups|schemas|tags --reference reference/esg-dev.yaml [--profile <workspace-profile>] [--apply]
 ```
 
-`--check` validates the workbook without writing; `--verify` fails unless `config/esg-dev` already holds
-exactly what the workbook generates. `--reference` and `--sql` are required. Validation warnings
-fail by default (`--skip-warning` to allow them). `ucgov-provision` only reads unless `--apply` is given.
+`--reference` is required by all three, and `--sql` by `ucgov-validate`: neither is ever guessed.
+`ucgov-generate` checks the generated config against the reference while generating — groups,
+schemas, data products (including Data Products tab entries no table or rule uses) and tag values —
+and writes nothing if anything fails. `--check` writes nothing; `--verify` fails unless
+`config/esg-dev` already holds exactly what the workbook generates. Warnings fail by default in
+`ucgov-generate` and `ucgov-validate` (`--skip-warning` to let them through); `--verbose` lists every
+check. `ucgov-provision` only reads unless `--apply` is given.
 
 ## Prerequisites (one-time, outside the framework)
 

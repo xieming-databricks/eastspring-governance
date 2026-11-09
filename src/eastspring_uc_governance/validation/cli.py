@@ -21,7 +21,9 @@ import sys
 from .validator import ValidationResult, validate_dir
 
 
-def _print(result: ValidationResult, verbose: bool = False) -> None:
+def print_result(result: ValidationResult, verbose: bool = False) -> None:
+    """The checks (with --verbose), the summary line and every issue — shared by ucgov-validate and
+    ucgov-generate, so both report the same way."""
     if verbose:
         print(f"checked {len(result.checks)} item(s):")
         for check in result.checks:
@@ -48,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     result = validate_dir(args.config_dir, reference=args.reference, sql_dir=args.sql)
-    _print(result, verbose=args.verbose)
+    print_result(result, verbose=args.verbose)
     if not result.ok:
         return 1
     if result.warnings and not args.skip_warning:

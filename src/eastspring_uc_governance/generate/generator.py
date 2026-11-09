@@ -62,6 +62,11 @@ def _column(rows: list[dict], key: str) -> set:
     return {r[key] for r in rows if r.get(key)}
 
 
+def workbook_data_products(wb: dict[str, list[dict[str, Any]]]) -> list[str]:
+    """The Data Products tab's ``data_product`` values, in sheet order, de-duplicated."""
+    return list(dict.fromkeys(r["data_product"] for r in wb.get(T_DATA_PRODUCTS, []) if r.get("data_product")))
+
+
 def generate_config(wb: dict[str, list[dict[str, Any]]]) -> Docs:
     """Transform workbook row-dicts into the docs dict; raise ``GeneratorError`` on any problem."""
     problems: list[str] = []

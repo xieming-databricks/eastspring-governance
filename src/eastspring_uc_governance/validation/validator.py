@@ -383,7 +383,7 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
                     if isinstance(tv, str):
                         note(used_tag_pairs, (tk, tv), "policies.yaml", path)
 
-    _REF = "reference allow-list (config/reference)"
+    _REF = "reference allow-list"
     # groups is a list of {name, external_id: <Entra Object ID | null>}; the names are the approved
     # set. external_id is only shape-checked here — whether it is *required* depends on how the
     # group is provisioned (null = local group), which is the provisioning step's concern.

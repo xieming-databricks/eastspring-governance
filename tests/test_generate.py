@@ -17,6 +17,7 @@ from eastspring_uc_governance.validation import validate_dir, validate_docs
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 WORKBOOK = FIXTURES / "access-matrix-esg_workshop-v3-dynamic-views.xlsx"   # frozen copy of the v3 sign-off
+REFERENCE = FIXTURES / "config" / "reference" / "esg.yaml"                  # ...and its reference allow-list
 
 
 def _wb(*, groups=("g_read", "g_admin"), data_products=("dp_a", "dp_b"), tables=None,
@@ -347,13 +348,18 @@ def test_write_config_writes_all_six_files(tmp_path):
 @pytest.fixture
 def v3_cli(monkeypatch):
     """The generate CLI reading the v3 fixture workbook minus its when_* columns (as deleted in
-    Excel); returns cli.main."""
+    Excel), with the fixture reference unless the call passes its own --reference. ``.wb`` is the
+    workbook it reads (a test may change its rows)."""
     from eastspring_uc_governance.generate import cli
     wb = read_workbook(WORKBOOK, sheets=REQUIRED_SHEETS)
     wb["Masking Rules"] = [{k: v for k, v in r.items() if k not in ("when_key", "when_value")}
                            for r in wb["Masking Rules"]]
     monkeypatch.setattr(cli, "read_workbook", lambda path, sheets: wb)
-    return cli.main
+
+    def run(argv):
+        return cli.main(argv if "--reference" in argv else [*argv, "--reference", str(REFERENCE)])
+    run.wb = wb
+    return run
 
 
 def test_verify_passes_right_after_generating(v3_cli, tmp_path, capsys):
@@ -421,3 +427,89 @@ def test_check_and_verify_are_exclusive(v3_cli, tmp_path):
     with pytest.raises(SystemExit) as exc:
         v3_cli(["wb.xlsx", str(tmp_path), "--check", "--verify"])
     assert exc.value.code == 2
+
+
+# ---- cli --reference (required), --skip-warning, --verbose ------------------
+
+def _reference_without(tmp_path, data_product):
+    """A copy of the fixture reference without one data product; returns its path."""
+    ref = yaml.safe_load(REFERENCE.read_text(encoding="utf-8"))
+    ref["data_products"] = [d for d in ref["data_products"] if d != data_product]
+    path = tmp_path / "reference.yaml"
+    path.write_text(yaml.safe_dump(ref, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def test_cli_requires_reference(capsys):
+    """ucgov-generate refuses to run without --reference (never guessed), like validate / provision.
+
+    Expected: argparse exits with code 2 and the error names --reference.
+    """
+    from eastspring_uc_governance.generate.cli import main
+    with pytest.raises(SystemExit) as exc:
+        main([str(WORKBOOK), "out"])
+    assert exc.value.code == 2 and "--reference" in capsys.readouterr().err
+
+
+def test_cli_missing_reference_file_fails_before_reading_the_workbook(v3_cli, tmp_path, capsys):
+    """A --reference that doesn't exist stops generation; nothing is written.
+
+    Expected: exit 1, "reference allow-list not found", no output folder.
+    """
+    out = tmp_path / "esg"
+    assert v3_cli(["wb.xlsx", str(out), "--reference", str(tmp_path / "nope.yaml")]) == 1
+    assert "reference allow-list not found" in capsys.readouterr().out
+    assert not out.exists()
+
+
+def test_cli_used_data_product_missing_from_reference_fails_and_writes_nothing(v3_cli, tmp_path, capsys):
+    """A data product the config uses but the reference doesn't list is a warning; warnings fail by
+    default, so nothing is written — the business sees it while generating.
+
+    Expected: exit 1, the warning names investment_esg and --skip-warning, no output folder.
+    """
+    out = tmp_path / "esg"
+    ref = _reference_without(tmp_path, "investment_esg")
+    assert v3_cli(["wb.xlsx", str(out), "--reference", str(ref)]) == 1
+    text = capsys.readouterr().out
+    assert "data_product 'investment_esg' is not in the reference allow-list" in text
+    assert "--skip-warning" in text and "nothing written" in text
+    assert not out.exists()
+
+
+def test_cli_skip_warning_writes_and_still_prints_the_warning(v3_cli, tmp_path, capsys):
+    """With --skip-warning the config is written and the warning is still shown.
+
+    Expected: exit 0, the warning in the output, 6 files written.
+    """
+    out = tmp_path / "esg"
+    ref = _reference_without(tmp_path, "investment_esg")
+    assert v3_cli(["wb.xlsx", str(out), "--reference", str(ref), "--skip-warning"]) == 0
+    assert "'investment_esg' is not in the reference allow-list" in capsys.readouterr().out
+    assert len(list(out.glob("*.yaml"))) == 6
+
+
+def test_cli_unused_data_products_tab_entry_is_checked(v3_cli, tmp_path, capsys):
+    """A Data Products tab entry used by no table or grant rule never reaches the config, so only
+    ucgov-generate can see it: off the reference it's a warning, on the reference it's fine.
+
+    Expected: a warning for ghost_product (on the Data Products tab), none for portfolio_position.
+    """
+    v3_cli.wb["Data Products"].append({"data_product": "ghost_product"})
+    assert v3_cli(["wb.xlsx", str(tmp_path / "a"), "--check"]) == 1
+    text = capsys.readouterr().out
+    assert "Data Products tab: data_product 'ghost_product' is not in the reference allow-list" in text
+    assert "used by no table or grant rule" in text
+    v3_cli.wb["Data Products"][-1] = {"data_product": "portfolio_position"}      # on the reference
+    assert v3_cli(["wb.xlsx", str(tmp_path / "b"), "--check"]) == 0
+
+
+def test_cli_verbose_lists_every_check(v3_cli, tmp_path, capsys):
+    """--verbose lists the checks the way ucgov-validate does, including the Data Products tab.
+
+    Expected: exit 0; "checked", the per-file schema checks, the reference and the tab check.
+    """
+    assert v3_cli(["wb.xlsx", str(tmp_path / "esg"), "--verbose"]) == 0
+    text = capsys.readouterr().out
+    assert "checked" in text and "vs grants.schema.yaml" in text and "reference:" in text
+    assert "Data Products tab: 7 value(s) vs the reference's data_products" in text

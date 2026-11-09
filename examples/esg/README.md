@@ -24,7 +24,7 @@ function and RLS group the config refers to is created by the seeds, provisionin
 By hand, after changing anything here:
 
 ```bash
-ucgov-generate examples/esg/excels/esg-dev/access-matrix-esg_workshop-v3-dynamic-views.xlsx examples/esg/config/esg-dev --verify
+ucgov-generate examples/esg/excels/esg-dev/access-matrix-esg_workshop-v3-dynamic-views.xlsx examples/esg/config/esg-dev --verify --reference examples/esg/reference/esg-dev.yaml
 ucgov-validate examples/esg/config/esg-dev --reference examples/esg/reference/esg-dev.yaml --sql examples/esg/sql/esg-dev
 ```
 

@@ -51,7 +51,7 @@ def test_example_config_is_what_its_workbook_generates(capsys):
 
     Expected: ucgov-generate --verify exits 0 ("is up to date").
     """
-    rc = generate_cli.main([str(WORKBOOK), str(CONFIG), "--verify"])
+    rc = generate_cli.main([str(WORKBOOK), str(CONFIG), "--verify", "--reference", str(REFERENCE)])
     out = capsys.readouterr().out
     assert rc == 0, out
     assert "is up to date" in out
