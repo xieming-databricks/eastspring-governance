@@ -76,7 +76,7 @@ for opt in ("rbac_view_grants", "rbac_views"):
         docs[opt] = yaml.safe_load(opt_path.read_text())
 
 # Reference allow-list: authoritative, hand-curated per-deployment config, NOT generated from the
-# workbook. Holds the approved vocabulary (warning layer) + the target catalog, full-sync protected
+# workbook. Holds the approved vocabulary (checked as errors) + the target catalog, full-sync protected
 # set, skip_base_grants, the mask-exempt (ETL) principals, and the RLS entitlement table. Required,
 # from the reference_path widget only — never derived from config_path.
 from eastspring_uc_governance.validation import load_reference
@@ -96,20 +96,18 @@ print(f"[reconcile] config_source={config_path} | "
 
 # COMMAND ----------
 
-# DBTITLE 1,Validate the config (fail-closed errors; fail-open reference warnings)
+# DBTITLE 1,Validate the config (schema, semantic and reference errors all block)
 from eastspring_uc_governance.validation import validate_docs
 
-# Passing the reference adds fail-open warnings for any group / catalog.schema / tag key+value
-# the config uses but the allow-list does not list. Warnings are reported, never block.
+# Passing the reference adds an ERROR for any group / catalog.schema / data product / tag key+value
+# the config uses but the allow-list does not list — same rule as ucgov-validate in CI.
 vres = validate_docs(docs, reference=reference)
 for issue in vres.sorted_issues():
     print(f"  {issue}")
 if not vres.ok:
     raise ValueError(f"config invalid: {len(vres.errors)} error(s) — fix before reconciling")
-if vres.warnings:
-    print(f"[reconcile] config valid — {len(vres.warnings)} reference warning(s) (not blocking)")
-else:
-    print("[reconcile] config valid — no reference warnings")
+print(f"[reconcile] config valid — {len(vres.warnings)} advisory warning(s)" if vres.warnings
+      else "[reconcile] config valid — no issues")
 
 # COMMAND ----------
 

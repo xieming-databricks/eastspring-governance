@@ -1,7 +1,7 @@
 """Generate framework config YAMLs from an Access-Matrix workbook.
 
     ucgov-generate <workbook.xlsx> <out_dir> --reference reference/esg-dev.yaml [--check | --verify]
-                   [--verbose] [--skip-warning]
+                   [--verbose]
 
 Reads the workbook, converts it, validates the result (schema + the reference allow-list) and
 writes the config directory. --reference is required — never guessed — so the business sees an
@@ -9,8 +9,8 @@ off-list group, schema, data product or tag value while generating, not one step
 workbook's Data Products tab is checked too, including entries no table or grant rule uses (those
 never reach the config, so ucgov-validate can't see them).
 
-Warnings fail by default, like ucgov-validate, and then nothing is written; --skip-warning lets
-them through (still printed). --verbose lists every check. --check writes nothing; --verify writes
+Every issue is reported in one run; any error (in the workbook, or against the reference) fails
+it and nothing is written. Advisory warnings are printed only. --verbose lists every check. --check writes nothing; --verify writes
 nothing either, but fails unless out_dir already holds exactly what the workbook generates (a
 committed config out of date with its workbook). Exit code 0 on success, 1 on any failure.
 """
@@ -49,7 +49,8 @@ from .workbook import read_workbook
 
 
 def _data_products_tab(wb, docs, reference) -> tuple[list[Issue], Check]:
-    """Data Products tab entries that are not in the reference and that no table or grant rule uses.
+    """Errors for Data Products tab entries that are not in the reference and that no table or grant
+    rule uses.
     (A used one reaches the config and is reported by the regular reference check, with its place
     in the config.)"""
     tab = workbook_data_products(wb)
@@ -63,10 +64,10 @@ def _data_products_tab(wb, docs, reference) -> tuple[list[Issue], Check]:
             used.add(((rule.get("match") or {}).get("labels") or {}).get("data_product"))
     issues = [Issue(f"{T_DATA_PRODUCTS} tab", "", f"data_product {dp!r} is not in the reference allow-list "
                                                   f"(listed in the workbook, used by no table or grant rule)",
-                    "reference", "warning")
+                    "reference")
               for dp in tab if dp not in set(allowed) and dp not in used]
     return issues, Check(f"{T_DATA_PRODUCTS} tab", f"{len(tab)} value(s) vs the reference's data_products",
-                         "warnings" if issues else "ok")
+                         "issues" if issues else "ok")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,9 +79,6 @@ def main(argv: list[str] | None = None) -> int:
                         help="the reference allow-list YAML to check against, e.g. reference/esg-dev.yaml")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="list every check performed, not just issues")
-    parser.add_argument("--skip-warning", action="store_true",
-                        help="go on when there are only warnings (they are still printed); "
-                             "by default warnings fail like errors and nothing is written")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true",
                       help="validate and print a summary without writing files")
@@ -110,11 +108,8 @@ def main(argv: list[str] | None = None) -> int:
         print_result(result, verbose=args.verbose)
     writes = not (args.check or args.verify)
     if not result.ok:
-        print(f"FAIL: {len(result.errors)} error(s)" + (" — nothing written" if writes else ""))
-        return 1
-    if result.warnings and not args.skip_warning:
-        print(f"FAIL: {len(result.warnings)} warning(s) — fix the workbook or the reference, or pass "
-              f"--skip-warning to ignore" + (" (nothing written)" if writes else ""))
+        print(f"FAIL: {len(result.errors)} error(s) — fix the workbook or the reference"
+              + (" (nothing written)" if writes else ""))
         return 1
 
     n_labels = len(docs["labels"]["labels"])

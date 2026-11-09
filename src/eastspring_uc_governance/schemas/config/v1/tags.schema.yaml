@@ -40,5 +40,5 @@ $defs:
         additionalProperties: false
         properties:
           acm_pii_type:
-            $comment: Free non-empty string; the approved value vocabulary is validated (fail-open) against the reference allow-list's governed_tags, not by a closed enum here.
+            $comment: Free non-empty string; the approved value vocabulary is validated (an off-list value is an error) against the reference allow-list's governed_tags, not by a closed enum here.
             $ref: common.schema.yaml#/$defs/NonEmptyString

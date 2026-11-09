@@ -74,8 +74,12 @@ def _groups(args: argparse.Namespace) -> int:
     reference, source = _reference(args)
     if reference is None:
         return 1
-    for w in check_reference({}, reference):           # malformed GUID / duplicate / unnamed group
-        print(f"WARNING {w}")
+    problems = check_reference({}, reference)          # malformed GUID / duplicate / unnamed group
+    if problems:
+        for p in problems:
+            print(f"  {p}")
+        print(f"FAIL: {len(problems)} error(s) in {source} — fix the reference first (nothing provisioned)")
+        return 1
     try:
         live = cli_runner.list_account_groups(args.profile)
     except cli_runner.CliError as exc:

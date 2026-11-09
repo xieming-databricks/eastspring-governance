@@ -79,18 +79,20 @@ if `system.information_schema.abac_policy_definitions` can't be read.
 ## Commands
 
 ```bash
-ucgov-generate excels/esg-dev/<workbook>.xlsx config/esg-dev --reference reference/esg-dev.yaml [--check | --verify] [--verbose] [--skip-warning]
-ucgov-validate config/esg-dev --reference reference/esg-dev.yaml --sql sql/esg-dev [--verbose] [--skip-warning]
+ucgov-generate excels/esg-dev/<workbook>.xlsx config/esg-dev --reference reference/esg-dev.yaml [--check | --verify] [--verbose]
+ucgov-validate config/esg-dev --reference reference/esg-dev.yaml --sql sql/esg-dev [--verbose]
 ucgov-provision groups|schemas|tags --reference reference/esg-dev.yaml [--profile <workspace-profile>] [--apply]
 ```
 
 `--reference` is required by all three, and `--sql` by `ucgov-validate`: neither is ever guessed.
-`ucgov-generate` checks the generated config against the reference while generating — groups,
-schemas, data products (including Data Products tab entries no table or rule uses) and tag values —
-and writes nothing if anything fails. `--check` writes nothing; `--verify` fails unless
-`config/esg-dev` already holds exactly what the workbook generates. Warnings fail by default in
-`ucgov-generate` and `ucgov-validate` (`--skip-warning` to let them through); `--verbose` lists every
-check. `ucgov-provision` only reads unless `--apply` is given.
+Both `ucgov-generate` and `ucgov-validate` report every issue in one run. Anything outside the
+reference allow-list — a group, schema, data product (including Data Products tab entries no table
+or rule uses) or tag value — is an **error**, like a schema violation: the run fails, and
+`ucgov-generate` writes nothing. There is no override; fix the workbook or the reference. Warnings
+are advisory only and never fail (e.g. an `rls_entitlement_table` the SQL folder doesn't create,
+which may be customer-maintained). `--check` writes nothing; `--verify` fails unless
+`config/esg-dev` already holds exactly what the workbook generates; `--verbose` lists every check.
+`ucgov-provision` only reads unless `--apply` is given, and stops on a malformed reference.
 
 ## Prerequisites (one-time, outside the framework)
 

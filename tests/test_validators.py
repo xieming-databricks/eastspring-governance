@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from eastspring_uc_governance.validation import check_reference, load_reference, validate_dir, validate_docs
+from eastspring_uc_governance.validation import (Issue, ValidationResult, check_reference, load_reference,
+                                                validate_dir, validate_docs)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 ESG = FIXTURES / "config" / "esg"                          # ESG fixture config
@@ -227,7 +228,7 @@ def test_labels_required(tmp_path):
                for i in result.issues)
 
 
-# ---- reference allow-list (fail-open warning layer) ---------------------
+# ---- reference allow-list (off-list = error) ---------------------------
 
 _REFERENCE = {
     "groups": [{"name": "ok-group", "external_id": None}],   # external_id: Entra Object ID | null
@@ -240,11 +241,11 @@ _REFERENCE = {
 
 
 def test_check_reference_flags_offlist_vocabulary():
-    """The reference check warns about vocabulary that isn't on the allow-list: an unknown group,
-    schema, tag value and tag key.
+    """The reference check reports vocabulary that isn't on the allow-list as errors: an unknown
+    group, schema, tag value and tag key.
 
-    Expected: only reference-layer warnings, naming ghost-group, testcat.rogue, SSN and made_up_key;
-    the value under the unknown key is not warned about separately.
+    Expected: only reference-layer errors, naming ghost-group, testcat.rogue, SSN and made_up_key;
+    the value under the unknown key is not reported separately.
     """
     docs = {
         "base_grants": {"grant_rules": [
@@ -257,7 +258,7 @@ def test_check_reference_flags_offlist_vocabulary():
              "tags": {"made_up_key": "x"}}]},
     }
     issues = check_reference(docs, _REFERENCE)
-    assert all(i.severity == "warning" and i.layer == "reference" for i in issues)
+    assert all(i.severity == "error" and i.layer == "reference" for i in issues)
     msgs = " | ".join(i.message for i in issues)
     assert "'ghost-group'" in msgs        # off-list group
     assert "'testcat.rogue'" in msgs      # off-list schema
@@ -268,12 +269,11 @@ def test_check_reference_flags_offlist_vocabulary():
 
 
 def test_check_reference_flags_offlist_data_product():
-    """A data_product not on the allow-list is warned about, whether used in a grant match or a
-    label.
+    """A data_product not on the allow-list is an error, whether used in a grant match or a label.
 
-    Expected: a warning for data_product rogue_dp and none for the listed approved_dp.
+    Expected: an error for data_product rogue_dp and none for the listed approved_dp.
     """
-    # data_product is read from both grant match.labels and labels.yaml; off-list -> warning.
+    # data_product is read from both grant match.labels and labels.yaml; off-list -> error.
     docs = {
         "base_grants": {"grant_rules": [
             {"groups": ["ok-group"], "bundle": "READ",
@@ -283,9 +283,9 @@ def test_check_reference_flags_offlist_data_product():
              "labels": {"data_product": "approved_dp"}}]},
     }
     issues = check_reference(docs, _REFERENCE)
-    assert all(i.severity == "warning" for i in issues)
+    assert all(i.severity == "error" for i in issues)
     msgs = " | ".join(i.message for i in issues)
-    assert "data_product 'rogue_dp'" in msgs        # off-list -> warned
+    assert "data_product 'rogue_dp'" in msgs        # off-list -> error
     assert "approved_dp" not in msgs                # listed -> clean
 
 
@@ -326,7 +326,7 @@ def test_check_reference_flags_malformed_external_id():
     """A group's external_id must look like an Entra Object ID (GUID); a valid GUID and null both
     pass.
 
-    Expected: exactly one warning, at groups/2/external_id, saying the value "is not a GUID".
+    Expected: exactly one error, at groups/2/external_id, saying the value "is not a GUID".
     """
     # a group's external_id must look like an Entra Object ID (GUID); null (local group) is fine.
     ref = {"groups": [
@@ -335,7 +335,7 @@ def test_check_reference_flags_malformed_external_id():
         {"name": "typo-group", "external_id": "hera-sg-eq-read-masked"}]}                # a name, not an id
     issues = check_reference({}, ref)
     assert [(i.file, i.path) for i in issues] == [("reference", "groups/2/external_id")]
-    assert issues[0].severity == "warning" and "is not a GUID" in issues[0].message
+    assert issues[0].severity == "error" and "is not a GUID" in issues[0].message
 
 
 def test_check_reference_flags_duplicate_or_unnamed_group():
@@ -382,34 +382,33 @@ def test_check_reference_view_target_must_be_serving():
     assert "'testcat.serving'" not in msgs   # a real serving destination is fine
 
 
-def test_warnings_do_not_fail_validation():
-    """Reference warnings never make an otherwise schema-valid config fail.
+def test_offlist_vocabulary_fails_validation():
+    """An otherwise schema-valid config that uses vocabulary the reference doesn't list fails: the
+    reference is authoritative.
 
-    Expected: result.ok is True and there are no errors, but warnings are reported.
+    Expected: result.ok is False, and every error is a reference-layer one.
     """
     g, p, t, l = _baseline()
     docs = {"base_grants.yaml": g, "policies.yaml": p, "tags.yaml": t, "labels.yaml": l}
-    result = validate_docs(docs, reference={"groups": []})   # nothing approved -> warns on every group
-    assert result.ok                       # warnings never flip ok
-    assert result.warnings                 # ...but they are reported
-    assert not result.errors
+    result = validate_docs(docs, reference={"groups": []})   # nothing approved -> every group is off-list
+    assert not result.ok
+    assert result.errors and all(i.layer == "reference" for i in result.errors)
 
 
 def test_validate_dir_loads_reference_from_path(tmp_path):
     """validate_dir loads the reference YAML from the path it is given; passing reference={} turns
     the check off.
 
-    Expected: the config stays valid with a warning about ghost-group, and no warnings at all with
-    reference={}.
+    Expected: an error about ghost-group with the reference; no issue at all with reference={}.
     """
     cfg, ref = _config_with_unknown_group(tmp_path)
 
     result = validate_dir(cfg, reference=ref)
-    assert result.ok                       # schema-valid; only a warning
-    assert any("ghost-group" in w.message for w in result.warnings)
+    assert not result.ok
+    assert any("ghost-group" in e.message for e in result.errors)
 
-    # explicit reference={} disables the warning layer
-    assert validate_dir(cfg, reference={}).warnings == []
+    # explicit reference={} disables the reference layer
+    assert validate_dir(cfg, reference={}).issues == []
 
 
 def test_esg_config_has_no_reference_warnings():
@@ -468,14 +467,14 @@ def test_checks_mark_issues_and_missing(tmp_path):
     assert empty["base_grants.yaml"].status == "missing"
 
 
-def test_reference_check_status_is_warnings_when_offlist(tmp_path):
-    """The reference entry in the check list shows warnings when the config uses an off-list group.
+def test_reference_check_status_is_issues_when_offlist(tmp_path):
+    """The reference entry in the check list shows issues when the config uses an off-list group.
 
-    Expected: the reference check's status is warnings.
+    Expected: the reference check's status is issues.
     """
     cfg, ref = _config_with_unknown_group(tmp_path)
     by_target = {c.target: c for c in validate_dir(cfg, reference=ref).checks}
-    assert by_target["reference"].status == "warnings"
+    assert by_target["reference"].status == "issues"
 
 
 def test_cli_verbose_lists_checks(capsys):
@@ -518,43 +517,57 @@ def test_cli_requires_sql(capsys):
     assert "--sql" in capsys.readouterr().err
 
 
-def test_cli_fails_on_warnings_by_default(tmp_path, capsys):
-    """By default the validation CLI fails when there are warnings, even with no errors.
+def test_cli_fails_on_offlist_vocabulary(tmp_path, capsys):
+    """The validation CLI fails when the config uses a group the reference doesn't list.
 
-    Expected: exit code 1, and the output names the unknown group and mentions --skip-warning.
+    Expected: exit code 1 and the output names the unknown group as an error.
     """
     from eastspring_uc_governance.validation.cli import main
     cfg, ref = _config_with_unknown_group(tmp_path)
     rc = main([str(cfg), "--reference", str(ref), "--sql", str(ESG_SQL)])
     out = capsys.readouterr().out
     assert rc == 1
-    assert "'ghost-group' is not in the reference allow-list" in out
-    assert "--skip-warning" in out
+    assert "[error/reference]" in out and "'ghost-group' is not in the reference allow-list" in out
 
 
-def test_cli_skip_warning_passes_with_only_warnings(tmp_path, capsys):
-    """With --skip-warning, warnings are still printed but don't fail the run.
+def test_cli_has_no_skip_warning(capsys):
+    """There is no way to let reference findings through: --skip-warning no longer exists.
 
-    Expected: exit code 0, and the warning for the unknown group is still in the output.
+    Expected: argparse exits with code 2 on --skip-warning.
     """
     from eastspring_uc_governance.validation.cli import main
-    cfg, ref = _config_with_unknown_group(tmp_path)
-    rc = main([str(cfg), "--reference", str(ref), "--sql", str(ESG_SQL), "--skip-warning"])
+    with pytest.raises(SystemExit) as exc:
+        main([str(ESG), "--reference", str(ESG_REFERENCE), "--sql", str(ESG_SQL), "--skip-warning"])
+    assert exc.value.code == 2
+
+
+def test_cli_advisory_warning_does_not_fail(tmp_path, capsys):
+    """An advisory warning — here: the reference's RLS table isn't created by the SQL folder (it may
+    be customer-maintained) — is printed but doesn't fail the run.
+
+    Expected: exit code 0 and a [warning/sql] line for rls_entitlement_table.
+    """
+    from eastspring_uc_governance.validation.cli import main
+    ref = yaml.safe_load(ESG_REFERENCE.read_text(encoding="utf-8"))
+    ref["rls_entitlement_table"] = "hera-dev.governance.customer_allow_list"
+    path = tmp_path / "esg.yaml"
+    path.write_text(yaml.safe_dump(ref, sort_keys=False), encoding="utf-8")
+    rc = main([str(ESG), "--reference", str(path), "--sql", str(ESG_SQL)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "'ghost-group' is not in the reference allow-list" in out
+    assert "[warning/sql] reference:rls_entitlement_table" in out
 
 
 def test_skip_base_grants_must_be_boolean():
     """skip_base_grants must be a real boolean, since a quoted "true" would silently not skip.
 
-    Expected: no issues for True or False; for "true", exactly the warning "skip_base_grants must be
-    true or false, got 'true' (treated as false)".
+    Expected: no issues for True or False; for "true", exactly the error "skip_base_grants must be
+    true or false, got 'true' (only a real boolean is accepted)".
     """
     for ok in (True, False):
         assert check_reference({}, {"skip_base_grants": ok}) == []
     msgs = [i.message for i in check_reference({}, {"skip_base_grants": "true"})]
-    assert msgs == ["skip_base_grants must be true or false, got 'true' (treated as false)"]
+    assert msgs == ["skip_base_grants must be true or false, got 'true' (only a real boolean is accepted)"]
 
 
 # ---- summary line, unreadable files, missing / malformed documents ------
@@ -565,14 +578,17 @@ def _docs():
 
 
 def test_summary_text_for_clean_warning_and_error_results():
-    """The one-line summary distinguishes a clean result, warnings only, and errors.
+    """The one-line summary distinguishes a clean result, advisory warnings only, and errors.
 
-    Expected: "OK <docs> — no issues" when clean; "OK <docs> — 0 error(s), 1 warning(s)" when the
-    only problem is an off-list group; a line starting "FAIL <docs> —" when there is an error.
+    Expected: "OK <docs> — no issues" when clean; "OK <docs> — 0 error(s), 1 warning(s)" with only an
+    advisory warning; "FAIL <docs> — 1 error(s), 0 warning(s)" for an off-list group, and a line
+    starting "FAIL <docs> —" for a schema error.
     """
     assert validate_docs(_docs()).summary() == "OK <docs> — no issues"
+    advisory = ValidationResult("<docs>", issues=[Issue("reference", "rls_entitlement_table", "x", "sql", "warning")])
+    assert advisory.summary() == "OK <docs> — 0 error(s), 1 warning(s)"
     assert validate_docs(_docs(), reference={"groups": []}).summary() == \
-        "OK <docs> — 0 error(s), 1 warning(s)"
+        "FAIL <docs> — 1 error(s), 0 warning(s)"
     bad = _docs()
     bad["base_grants.yaml"]["grant_rules"][0]["bundle"] = "SUPERUSER"
     assert validate_docs(bad).summary().startswith("FAIL <docs> — ")

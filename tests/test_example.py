@@ -58,8 +58,8 @@ def test_example_config_is_what_its_workbook_generates(capsys):
 
 
 def test_example_validates_without_errors_or_warnings():
-    """The example config validates against its reference and SQL folder with no issue at all
-    (warnings fail the CLI by default, so they count here too).
+    """The example config validates against its reference and SQL folder with no issue at all —
+    not even an advisory warning.
 
     Expected: no errors, no warnings; the SQL folder check ran and is ok.
     """

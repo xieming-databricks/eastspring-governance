@@ -29,8 +29,9 @@ from referencing import Registry, Resource
 class Issue:
     """One validation finding, ordered by (file, path) for stable, diffable output.
 
-    ``severity`` is "error" (fail-closed: schema/semantic violations that block) or "warning"
-    (fail-open: e.g. references outside the reference allow-list). Only errors flip ``ok``."""
+    ``severity`` is "error" (fails the run: schema / semantic violations, and anything outside the
+    reference allow-list) or "warning" (advisory only, never fails: e.g. an RLS table the SQL folder
+    doesn't create, which may be customer-maintained). Only errors flip ``ok``."""
     file: str          # config file the issue is in, e.g. "grants.yaml"
     path: str          # location within the file, JSON-pointer style, e.g. "grant_rules/0/bundle"
     message: str = field(compare=False)
@@ -271,21 +272,23 @@ def _cross_file_version(schema_versions: dict[str, Any]) -> list[Issue]:
     ]
 
 
-# ---- reference allow-list layer (fail-open warnings) ---------------------
+# ---- reference allow-list layer (errors) ---------------------------------
 #
 # The reference (``config/reference/<deployment>.yaml``) is the hand-curated, authoritative
 # vocabulary a deployment may use: approved groups, catalog.schema pairs, and governed tag
 # keys/values. It is NOT generated from the workbook — the workbook is validated *against* it.
-# Anything the config uses that the reference does not list is a WARNING (severity="warning"),
-# never an error: it flags drift for a human without blocking a deploy.
+# Anything the config uses that the reference does not list is an ERROR: the reference is
+# authoritative, so an off-list group / schema / data product / tag value never gets deployed. A
+# malformed reference (unnamed or duplicate group, non-GUID external_id, non-boolean
+# skip_base_grants) is an error too.
 
 # Shape of a Microsoft Entra ID Object ID (8-4-4-4-12 hex) — a group's AIM external_id.
 _GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
 def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
-    """Warn (never fail) for groups / ``catalog.schema`` / tag keys+values the config uses
-    but the ``reference`` allow-list does not list.
+    """Errors for groups / ``catalog.schema`` / data products / tag keys+values the config uses
+    but the ``reference`` allow-list does not list, and for a malformed reference.
 
     ``docs`` may be keyed by short name (``"base_grants"``) or filename (``"base_grants.yaml"``).
     A reference dimension that is *absent* (key not present) is treated as "not curated" and
@@ -394,31 +397,31 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
         for g, (fn, path) in sorted(used_groups.items()):
             if g not in allowed:
                 issues.append(Issue(fn, path, f"group {g!r} is not in the {_REF}",
-                                    "reference", "warning"))
+                                    "reference"))
         seen: set[str] = set()
         for i, entry in enumerate(entries):
             name, ext = entry.get("name"), entry.get("external_id")
             if not name:
                 issues.append(Issue("reference", f"groups/{i}", "group entry has no name",
-                                    "reference", "warning"))
+                                    "reference"))
             elif name in seen:
                 issues.append(Issue("reference", f"groups/{i}/name",
                                     f"group {name!r} is listed more than once",
-                                    "reference", "warning"))
+                                    "reference"))
             seen.add(name)
             if ext is not None and not _GUID.fullmatch(str(ext)):
                 issues.append(Issue("reference", f"groups/{i}/external_id",
                                     f"external_id {ext!r} for group {name!r} is not a GUID "
                                     "(expected the Entra ID Object ID)",
-                                    "reference", "warning"))
+                                    "reference"))
 
     # skip_base_grants must be a real boolean: only `true` skips, so a quoted "true" (or 1) would
     # silently keep base grants managed — flag it.
     if "skip_base_grants" in reference and not isinstance(reference["skip_base_grants"], bool):
         issues.append(Issue("reference", "skip_base_grants",
                             f"skip_base_grants must be true or false, got "
-                            f"{reference['skip_base_grants']!r} (treated as false)",
-                            "reference", "warning"))
+                            f"{reference['skip_base_grants']!r} (only a real boolean is accepted)",
+                            "reference"))
 
     # approved-schema set = union of the role buckets (source + governance + serving).
     src_schemas = reference.get("source_schemas")
@@ -429,7 +432,7 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
         for s, (fn, path) in sorted(used_schemas.items()):
             if s not in allowed:
                 issues.append(Issue(fn, path, f"schema {s!r} is not in the {_REF}",
-                                    "reference", "warning"))
+                                    "reference"))
 
     # a dynamic view's target (destination) schema must be a declared serving_schema.
     if srv_schemas is not None:
@@ -438,7 +441,7 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
             if s not in serving:
                 issues.append(Issue(fn, path,
                                     f"view target schema {s!r} is not a declared serving_schema",
-                                    "reference", "warning"))
+                                    "reference"))
 
     allowed_data_products = reference.get("data_products")
     if allowed_data_products is not None:
@@ -446,7 +449,7 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
         for dp, (fn, path) in sorted(used_data_products.items()):
             if dp not in allowed:
                 issues.append(Issue(fn, path, f"data_product {dp!r} is not in the {_REF}",
-                                    "reference", "warning"))
+                                    "reference"))
 
     # governed_tags maps each approved acm_ tag key -> its approved values. Its keys are the
     # approved tag-key set; its per-key list is the approved value set. Absent => tag vocabulary
@@ -457,14 +460,14 @@ def check_reference(docs: dict[str, Any], reference: Any) -> list[Issue]:
         for tk, (fn, path) in sorted(used_tag_keys.items()):
             if tk not in allowed_keys:
                 issues.append(Issue(fn, path, f"tag key {tk!r} is not in the {_REF}",
-                                    "reference", "warning"))
+                                    "reference"))
         for (tk, tv), (fn, path) in sorted(used_tag_pairs.items()):
             allowed_vals = governed.get(tk)
             # only value-check keys the reference curates; unknown keys already warned above.
             if allowed_vals is not None and tv not in set(allowed_vals):
                 issues.append(Issue(fn, path,
                                     f"tag value {tv!r} for key {tk!r} is not in the {_REF}",
-                                    "reference", "warning"))
+                                    "reference"))
 
     return issues
 
@@ -494,9 +497,9 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
     """Validate grants/policies/tags YAML in ``config_dir`` against the YAML schemas.
 
     ``reference`` is the allow-list: a path to the reference YAML (e.g. ``reference/esg.yaml``) or
-    an already-loaded dict, and its warnings are appended. It is never auto-discovered: None, or a
-    missing / unreadable file, is an ERROR (otherwise the group / schema / tag checks would be
-    silently skipped). Pass ``{}`` to deliberately disable the warning layer (schema-only).
+    an already-loaded dict, and its findings (errors) are appended. It is never auto-discovered:
+    None, or a missing / unreadable file, is an ERROR (otherwise the group / schema / tag checks would
+    be silently skipped). Pass ``{}`` to deliberately disable the reference layer (schema-only).
 
     ``sql_dir`` is the deployment's SQL folder (e.g. ``sql/esg``): checked against the reference and
     the config (``validation.sql_check``). None skips it, recorded as a skipped check — the CLI
@@ -559,7 +562,7 @@ def validate_dir(config_dir: str | Path, schema_dir: str | Path | None = None,
     ref_issues = check_reference(parsed, reference)
     result.issues.extend(ref_issues)
     result.checks.append(Check("reference", _describe_reference(reference),
-                               "warnings" if ref_issues else "ok"))
+                               "issues" if ref_issues else "ok"))
 
     if sql_dir is None:
         result.checks.append(Check("sql", "SQL folder not given — not checked", "skipped"))
@@ -585,8 +588,8 @@ def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None,
     ``docs`` may be keyed by short name (``"grants"``) or filename (``"grants.yaml"``).
     Use this when config arrives as in-memory dicts (e.g. JSON job params) rather than
     files on disk. A missing dimension is reported as an issue, mirroring ``validate_dir``.
-    Pass ``reference`` (the allow-list dict) to also append fail-open reference warnings; when
-    None the warning layer is skipped (there is no directory to auto-discover it from).
+    Pass ``reference`` (the allow-list dict) to also append the reference findings (errors); when
+    None the reference layer is skipped (there is no directory to auto-discover it from).
     """
     schema_dir = Path(schema_dir) if schema_dir is not None else _DEFAULT_SCHEMA_DIR
     by_file = {_SHORT_TO_FILE.get(key, key): doc for key, doc in docs.items()}
@@ -619,7 +622,7 @@ def validate_docs(docs: dict[str, Any], schema_dir: str | Path | None = None,
         ref_issues = check_reference(docs, reference)
         result.issues.extend(ref_issues)
         result.checks.append(Check("reference", _describe_reference(reference),
-                                   "warnings" if ref_issues else "ok"))
+                                   "issues" if ref_issues else "ok"))
     else:
         result.checks.append(Check("reference", "no allow-list provided", "skipped"))
     return result

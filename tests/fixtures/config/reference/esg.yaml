@@ -6,8 +6,8 @@ schema_version: "1.0"
 #
 # This is the single source of truth for the groups, schemas, data products, and governed tags
 # that the Access Matrix is allowed to use. Anything referenced by the workbook / generated config that is NOT
-# listed here should raise a validation WARNING (a soft, fail-open check — distinct from the hard,
-# fail-closed JSON-Schema validation). It is hand-curated by governance, not generated from the
+# listed here is a validation ERROR (ucgov-generate and ucgov-validate fail, nothing is written or
+# deployed). It is hand-curated by governance, not generated from the
 # workbook (the workbook is validated *against* it).
 
 # ---- target catalog: the single catalog this deployment is authoritative over ---
@@ -79,7 +79,7 @@ groups:
 # governance_schemas: helper schema(s) — mask UDFs, the group_portfolio_access MV, entitlement tables.
 # source_schemas    : base tables live here — locked down; dynamic views READ from them.
 # serving_schemas   : dynamic views live here (end-users granted READ). A view's target_schema must
-#                     be one of these (validated as a fail-open warning).
+#                     be one of these (an off-list one is an error).
 governance_schemas:
   - hera-dev.governance
 source_schemas:
@@ -91,7 +91,7 @@ serving_schemas:
 
 # ---- data products: approved data_product asset labels (grant selection) -----
 # The data_product values the matrix may attach as labels / match grant rules on. Off-list
-# values raise a fail-open warning.
+# values are an error.
 data_products:
   - investment_esg
   - investment_research

@@ -429,7 +429,7 @@ def test_check_and_verify_are_exclusive(v3_cli, tmp_path):
     assert exc.value.code == 2
 
 
-# ---- cli --reference (required), --skip-warning, --verbose ------------------
+# ---- cli --reference (required), reference errors, --verbose ---------------
 
 def _reference_without(tmp_path, data_product):
     """A copy of the fixture reference without one data product; returns its path."""
@@ -463,37 +463,35 @@ def test_cli_missing_reference_file_fails_before_reading_the_workbook(v3_cli, tm
 
 
 def test_cli_used_data_product_missing_from_reference_fails_and_writes_nothing(v3_cli, tmp_path, capsys):
-    """A data product the config uses but the reference doesn't list is a warning; warnings fail by
-    default, so nothing is written — the business sees it while generating.
+    """A data product the config uses but the reference doesn't list is an error: the run fails and
+    nothing is written — the business sees it while generating.
 
-    Expected: exit 1, the warning names investment_esg and --skip-warning, no output folder.
+    Expected: exit 1, the error names investment_esg, "nothing written", no output folder.
     """
     out = tmp_path / "esg"
     ref = _reference_without(tmp_path, "investment_esg")
     assert v3_cli(["wb.xlsx", str(out), "--reference", str(ref)]) == 1
     text = capsys.readouterr().out
-    assert "data_product 'investment_esg' is not in the reference allow-list" in text
-    assert "--skip-warning" in text and "nothing written" in text
+    assert "[error/reference]" in text and "data_product 'investment_esg' is not in the reference allow-list" in text
+    assert "nothing written" in text
     assert not out.exists()
 
 
-def test_cli_skip_warning_writes_and_still_prints_the_warning(v3_cli, tmp_path, capsys):
-    """With --skip-warning the config is written and the warning is still shown.
+def test_cli_has_no_skip_warning(v3_cli, tmp_path):
+    """There is no way to let reference errors through: --skip-warning no longer exists.
 
-    Expected: exit 0, the warning in the output, 6 files written.
+    Expected: argparse exits with code 2 on --skip-warning.
     """
-    out = tmp_path / "esg"
-    ref = _reference_without(tmp_path, "investment_esg")
-    assert v3_cli(["wb.xlsx", str(out), "--reference", str(ref), "--skip-warning"]) == 0
-    assert "'investment_esg' is not in the reference allow-list" in capsys.readouterr().out
-    assert len(list(out.glob("*.yaml"))) == 6
+    with pytest.raises(SystemExit) as exc:
+        v3_cli(["wb.xlsx", str(tmp_path / "esg"), "--skip-warning"])
+    assert exc.value.code == 2
 
 
 def test_cli_unused_data_products_tab_entry_is_checked(v3_cli, tmp_path, capsys):
     """A Data Products tab entry used by no table or grant rule never reaches the config, so only
-    ucgov-generate can see it: off the reference it's a warning, on the reference it's fine.
+    ucgov-generate can see it: off the reference it's an error, on the reference it's fine.
 
-    Expected: a warning for ghost_product (on the Data Products tab), none for portfolio_position.
+    Expected: an error for ghost_product (on the Data Products tab), none for portfolio_position.
     """
     v3_cli.wb["Data Products"].append({"data_product": "ghost_product"})
     assert v3_cli(["wb.xlsx", str(tmp_path / "a"), "--check"]) == 1

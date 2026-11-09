@@ -96,7 +96,7 @@ LabelAssignment = {
 }
 TagAssignment = {
   securable: {type: "column", name: ColumnName},    # column securables only
-  tags: {acm_pii_type: NonEmptyString}[1..*]   # value vocabulary validated (fail-open) against the reference allow-list, not a closed enum
+  tags: {acm_pii_type: NonEmptyString}[1..*]   # value vocabulary validated (off-list = error) against the reference allow-list, not a closed enum
 }
 
 ColumnMaskPolicy = {
